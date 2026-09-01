@@ -1,8 +1,8 @@
 # LinkDog Local
 
-Self-hosted adapter for the [LinkDog](https://www.linkdog.com) robot dog. Replace the official cloud with your own LLM while keeping official WeChat mini-program control.
+Self-hosted adapter for the [LinkDog](https://gitee.com/jeremywang0102/linkdog) robot dog. Replace the official cloud with your own LLM while keeping official WeChat mini-program control.
 
-> **Status: early development.** Source code is being prepared for release and is not yet published in this repository. This README documents the target architecture and setup flow.
+> **Status: early development.** The adapter works end-to-end, but setup still requires some manual steps (see [New dog setup](#new-dog-setup)). Contributions and feedback welcome.
 
 ## What it does
 
@@ -20,7 +20,6 @@ LinkDog (ESP32-S3 + C3)
    │  Control: WeChat mini-program (Bluetooth direct — no wifi, no adapter)
    │
    └── Voice / LLM / OTA ──►  adapter (FastAPI :8003)
-                                 │  mDNS: linkdog.local
                                  ├─ ASR (faster-whisper)
                                  ├─ LLM (Ollama Cloud / any OpenAI-compatible)
                                  ├─ TTS (Pocket TTS / edge-tts)
@@ -29,29 +28,11 @@ LinkDog (ESP32-S3 + C3)
 
 Three paths are fully decoupled: swapping the adapter only affects voice/LLM/OTA; provisioning and control are untouched.
 
-## Hardware requirements
+## Requirements
 
 - A LinkDog robot dog (ESP32-S3 main + C3 co-processor).
 - A computer on the same LAN to run the adapter (macOS, Linux, or Windows).
 - Python 3.11+.
-
-## Dependencies
-
-Core (see `requirements.txt`):
-
-- `fastapi` + `uvicorn[standard]` — HTTP/WebSocket server.
-- `faster-whisper` — speech-to-text (ASR).
-- `webrtcvad-wheels` — voice activity detection.
-- `edge-tts` — cloud TTS fallback.
-- `numpy` — audio processing (ASR path).
-
-MCP bridge (see `requirements-mcp.txt`):
-
-- `fastmcp` + `httpx` — motion-control MCP server.
-
-Optional:
-
-- Pocket TTS (local neural TTS) — `pocket-tts`, `torch`, `scipy`, `soundfile`. See `requirements-tts.txt` and `docs/pocket-tts.md`.
 
 ## Setup
 
@@ -73,25 +54,43 @@ Optional:
 
    The adapter listens on port `8003` and serves the dashboard at `http://<host>:8003/dashboard`.
 
+## Dependencies
+
+Core (see `requirements.txt`):
+
+- `fastapi` + `uvicorn[standard]` — HTTP/WebSocket server.
+- `faster-whisper` — speech-to-text (ASR).
+- `webrtcvad-wheels` — voice activity detection.
+- `edge-tts` — cloud TTS fallback.
+- `numpy` — audio processing (ASR path).
+
+MCP bridge (see `requirements-mcp.txt`):
+
+- `fastmcp` + `httpx` — motion-control MCP server.
+
+Optional:
+
+- Pocket TTS (local neural TTS) — `pocket-tts`, `torch`, `scipy`, `soundfile`. See `requirements-tts.txt` and `docs/pocket-tts.md`.
+
 ## New dog setup
 
 1. **Provision** — use the official WeChat mini-program to connect the dog to your Wi-Fi (Bluetooth, writes credentials).
 2. **Get the MAC** — the dog's MAC address identifies it to the adapter (shown in the dashboard once connected).
-3. **Point to the adapter** — the dog's OTA/WebSocket URLs resolve to the adapter host (see Design Notes on mDNS).
+3. **Point to the adapter** — the dog's OTA/WebSocket URLs must resolve to the adapter host. The stock firmware points at a hard-coded IP; see [Firmware](#firmware) for how to point it at your adapter.
 4. **Verify** — the dog connects over WebSocket; check the dashboard shows it as connected and test a voice command.
 
-## Design Notes
+## Firmware
 
-- **mDNS** *(planned — see Roadmap)*: `CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y` alone lets the ESP32 resolve `.local` — no esp_mdns component, no custom query. lwIP sends the query to multicast `224.0.0.251:5353`; the responder replies via unicast (RFC 6762). The adapter host must run a standard mDNS responder (avahi/Bonjour/esp_mdns). Firmware change is a pure string replace (hard-coded IP → `linkdog.local`).
-- **Multi-dog**: the adapter supports multiple dogs (`ACTIVE_SESSIONS` keyed by MAC). mDNS is for portability, not multi-dog disambiguation.
-- **LLM config**: non-secret fields (model/api_url) live in `data/settings.json`; the API key stays in `.env`.
+The stock firmware hard-codes the adapter host as a LAN IP. To use this adapter you need to rebuild the firmware with your host address (or a `.local` mDNS name). The firmware source is MIT and available from the [upstream LinkDog repo](https://gitee.com/jeremywang0102/linkdog).
 
-## Roadmap
+- **mDNS** *(recommended)*: enable `CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y` and replace the hard-coded IP with `linkdog.local`. Your adapter host must run a standard mDNS responder (avahi/Bonjour/esp_mdns). This keeps the firmware portable across networks.
+- **IP direct**: replace the hard-coded IP with your adapter host's LAN IP. Simpler, but breaks if your IP changes.
 
-- **mDNS firmware change** — replace hard-coded IPs with `linkdog.local` (requires firmware rebuild + flash).
-- **Remove closed-source MQTT dependency** — drop `liblinkdog_mqtt.a` (zero functional loss).
-- **Portability** — complete `requirements.txt`, consider Docker.
+## Configuration
+
+- **LLM**: non-secret fields (model, provider, API URL) live in `data/settings.json`; the API key stays in `.env`.
+- **Multiple dogs**: the adapter supports several dogs, keyed by MAC address.
 
 ## License
 
-MIT. Firmware source is MIT (LinkDog vendor); esp-sr `.a` libs are ESPRESSIF MIT (prefer `idf_component.yml` dependency over committing binaries).
+MIT. The upstream LinkDog firmware source is also MIT.
