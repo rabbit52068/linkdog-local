@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+webrtcvad-wheels>=2.0.14
+faster-whisper>=1.1,<2
+edge-tts>=7.2,<8
+numpy>=1.24

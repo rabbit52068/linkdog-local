@@ -1,0 +1,36 @@
+# Secrets & environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-*/
+.pytest_cache/
+
+# Runtime data (contains PII)
+data/settings.json
+
+# Firmware binaries (closed-source / large)
+firmware/*.bin
+
+# Audio (personal recordings / dataset files)
+*.wav
+voices/
+
+# macOS
+.DS_Store
+
+# Backup files
+*.bak*
+
+# One-off generation scripts
+_gen_*.py
+
+# Internal debugging docs (contain MAC/IP/PID/paths) — production only.
+# This repo's docs/ holds clean, publishable docs and is tracked.
+
+# Hermes internal
+.hermes/

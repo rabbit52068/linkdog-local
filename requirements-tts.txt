@@ -1,0 +1,6 @@
+# Optional: local neural TTS (Pocket TTS).
+# Install only if you want offline TTS instead of edge-tts.
+pocket-tts>=3.0
+torch>=2.0
+scipy>=1.10
+soundfile>=0.12
