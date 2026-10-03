@@ -127,7 +127,7 @@ class HermesAPIClient:
 
             try:
                 response = await self._client.post("/chat/completions", json=payload)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except httpx.HTTPError as exc:
                 raise HermesUnavailableError("Hermes API is unavailable") from exc
 
             if response.status_code in (401, 403):
@@ -214,7 +214,7 @@ class HermesAPIClient:
 
             try:
                 response = await self._client.post("/chat/completions", json=payload)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except httpx.HTTPError as exc:
                 raise HermesUnavailableError("Hermes API is unavailable") from exc
 
             if response.status_code in (401, 403):
@@ -322,7 +322,7 @@ class HermesAPIClient:
                     if not full_text:
                         raise HermesResponseError("Hermes API response text is empty")
                     self._record_history(device_id, user_text, full_text)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except httpx.HTTPError as exc:
                 raise HermesUnavailableError("Hermes API is unavailable") from exc
 
     async def _complete_nonstream(
@@ -346,7 +346,7 @@ class HermesAPIClient:
 
         try:
             response = await self._client.post("/chat/completions", json=payload)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        except httpx.HTTPError as exc:
             raise HermesUnavailableError("Hermes API is unavailable") from exc
 
         if response.status_code in (401, 403):

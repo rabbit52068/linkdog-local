@@ -617,6 +617,73 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.websocket.messages[-1], {"type": "tts", "state": "stop"})
         self.assertEqual(self.session.state, DeviceState.LISTENING)
 
+    async def test_streaming_first_sentence_tts_failure_still_plays_the_rest(self):
+        class FailFirstTTS(FakeTTS):
+            async def synthesize(self, text):
+                self.calls.append(text)
+                if len(self.calls) == 1:
+                    raise TTSError("transient")
+                return self.pcm
+
+        hermes = StreamingHermes(["First one. ", "Second one. ", "Third one."])
+        tts = FailFirstTTS(pcm=b"ok-pcm")
+        player = FakePlayer()
+        worker = await self.start_worker(
+            FakeASR(result="hi"),
+            hermes=hermes,
+            tts=tts,
+            player=player,
+        )
+        await self.voice_input.utterances.put(b"pcm")
+
+        await asyncio.wait_for(worker.next_response(), timeout=0.2)
+
+        self.assertEqual(worker.tts_failures, 1)
+        self.assertEqual(worker.playback_failures, 0)
+        self.assertEqual(player.calls, [
+            ("Second one.", b"<begin>"),
+            ("<feed>", b"ok-pcm"),
+            ("<feed>", b"ok-pcm"),
+            ("<finish>", b""),
+        ])
+
+    async def test_streaming_emoji_only_first_sentence_opens_turn_on_next(self):
+        hermes = StreamingHermes(["😊\n", "Hello there."])
+        player = FakePlayer()
+        worker = await self.start_worker(
+            FakeASR(result="hi"),
+            hermes=hermes,
+            tts=FakeTTS(pcm=b"p"),
+            player=player,
+        )
+        await self.voice_input.utterances.put(b"pcm")
+
+        await asyncio.wait_for(worker.next_response(), timeout=0.2)
+
+        self.assertEqual(worker.playback_failures, 0)
+        self.assertEqual(player.calls[-1], ("<finish>", b""))
+        self.assertIn(b"<begin>", [pcm for _, pcm in player.calls])
+
+    async def test_unexpected_turn_error_does_not_stop_the_worker(self):
+        class FlakyHermes(FakeHermes):
+            async def complete(self, device_id, text):
+                self.calls.append((device_id, text))
+                if len(self.calls) == 1:
+                    raise RuntimeError("peer closed connection")
+                return self.result
+
+        hermes = FlakyHermes(result="second answer")
+        worker = await self.start_worker(FakeASR(result="hi"), hermes=hermes)
+
+        await self.voice_input.utterances.put(b"pcm-1")
+        await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)
+        self.assertEqual(worker.turn_errors, 1)
+        self.assertEqual(self.websocket.messages[-1], {"type": "tts", "state": "stop"})
+
+        await self.voice_input.utterances.put(b"pcm-2")
+        response = await asyncio.wait_for(worker.next_response(), timeout=0.2)
+        self.assertEqual(response, "second answer")
+
     async def test_blank_transcript_recovers_listening_state(self):
         worker = await self.start_worker(FakeASR(result="   "))
         with patch("builtins.print") as mock_print:

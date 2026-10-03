@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from app.asr import ASRError, ASRTimeoutError
-from app.device_session import DeviceSession, DeviceState
+from app.device_session import DeviceSession, DeviceState, SessionClosedError
 from app.hermes_client import HermesAPIError, HermesToolCall
 from app.playback import PlaybackError
 from app.redact import redact_secrets
@@ -128,6 +128,7 @@ class VoiceTurnWorker:
         self.tts_failures = 0
         self.playback_failures = 0
         self.aborts = 0
+        self.turn_errors = 0
         self._generation = 0
         self._active_turn: Optional[asyncio.Task] = None
         self._aborted_task: Optional[asyncio.Task] = None
@@ -193,6 +194,25 @@ class VoiceTurnWorker:
                     await task
                 except asyncio.CancelledError:
                     if task is not self._aborted_task:
+                        raise
+                except SessionClosedError:
+                    raise
+                except Exception as error:  # noqa: BLE001
+                    # One bad turn must not end the loop: the socket stays
+                    # open, so the device would look connected but never
+                    # answer again until it reconnects.
+                    self.turn_errors += 1
+                    LOGGER.error(
+                        "voice turn failed: device=%s generation=%d cause=%s",
+                        self.session.device_id,
+                        generation,
+                        self._format_cause(error),
+                    )
+                    if self.session.closed:
+                        raise
+                    try:
+                        await self._recover_if_current(generation)
+                    except SessionClosedError:
                         raise
                 finally:
                     if self._active_turn is task:
@@ -349,8 +369,9 @@ class VoiceTurnWorker:
                 for sentence in splitter.feed(delta):
                     if not self._is_current(generation):
                         return
-                    await self._speak_sentence(sentence, generation, turn_opened)
-                    turn_opened = True
+                    turn_opened = await self._speak_sentence(
+                        sentence, generation, turn_opened
+                    )
         except HermesAPIError:
             self.hermes_failures += 1
             await self._recover_if_current(generation)
@@ -360,8 +381,9 @@ class VoiceTurnWorker:
             return
         remaining = splitter.flush()
         if remaining:
-            await self._speak_sentence(remaining, generation, turn_opened)
-            turn_opened = True
+            turn_opened = await self._speak_sentence(
+                remaining, generation, turn_opened
+            )
 
         if turn_opened:
             try:
@@ -378,29 +400,36 @@ class VoiceTurnWorker:
 
     async def _speak_sentence(
         self, sentence: str, generation: int, turn_opened: bool
-    ) -> None:
-        """Synthesize and enqueue one sentence; open the turn on the first."""
+    ) -> bool:
+        """Synthesize and enqueue one sentence; open the turn on the first.
+
+        Returns whether the playback turn is open afterwards, so a sentence
+        that was skipped or failed TTS does not leave later sentences feeding
+        a turn that was never begun.
+        """
         spoken, emotion = extract_emotion_prefix(sentence)
         spoken = sanitize_spoken_text(spoken)
         if not spoken:
-            return
+            return turn_opened
         try:
             pcm = await self.tts.synthesize(spoken)
         except TTSError as error:
             self._note_tts_failure(error, spoken, generation)
-            await self._recover_if_current(generation)
-            return
+            if not turn_opened:
+                await self._recover_if_current(generation)
+            return turn_opened
         if not self._is_current(generation):
-            return
+            return turn_opened
         try:
             if not turn_opened:
                 await self.player.begin(spoken, emotion=emotion)
+                turn_opened = True
             await self.player.feed(pcm)
         except PlaybackError:
             self.playback_failures += 1
             if self._is_current(generation):
                 self.session.state = DeviceState.LISTENING
-            return
+        return turn_opened
 
     async def _speak_one_shot(self, response: str, generation: int) -> None:
         """Speak a full response (tool-call confirmation) in one shot."""

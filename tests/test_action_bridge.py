@@ -30,6 +30,19 @@ class ActionValidationTests(unittest.TestCase):
         response = self.client.post("/xiaozhi/action", json={"action": "sit_down"})
         self.assertEqual(response.status_code, 409)
 
+    def test_malformed_hello_closes_socket_without_registering_device(self):
+        from starlette.websockets import WebSocketDisconnect
+
+        for bad_hello in ("not json", "[1, 2]"):
+            with self.client.websocket_connect(
+                "/xiaozhi/ws", headers={"device-id": "BAD:HELLO"}
+            ) as ws:
+                ws.send_text(bad_hello)
+                with self.assertRaises(WebSocketDisconnect) as ctx:
+                    ws.receive_text()
+            self.assertEqual(ctx.exception.code, 1003)
+            self.assertNotIn("BAD:HELLO", main.ACTIVE_SESSIONS)
+
     def test_rejects_unknown_action(self):
         response = self.client.post("/xiaozhi/action", json={"action": "not_a_real_action"})
         self.assertEqual(response.status_code, 400)

@@ -919,7 +919,14 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     # Read the device hello
     raw = await ws.receive_text()
-    hello = json.loads(raw)
+    try:
+        hello = json.loads(raw)
+    except json.JSONDecodeError:
+        hello = None
+    if not isinstance(hello, dict):
+        print("[WS] rejected connection: first message is not a JSON object")
+        await ws.close(code=1003)
+        return
     device_id = ws.headers.get("device-id", "unknown")
     print(f"[WS] hello from {device_id}: type={hello.get('type')}, "
           f"audio={hello.get('audio_params')}")

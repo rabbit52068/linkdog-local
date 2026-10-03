@@ -233,6 +233,20 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HermesUnavailableError):
             await self.client.complete("DOG:A", "你好")
 
+    async def test_protocol_errors_mid_stream_are_unavailable(self):
+        def truncated(request):
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body",
+                request=request,
+            )
+
+        client = self.make_client(truncated)
+        with self.assertRaises(HermesUnavailableError):
+            async for _delta in client.stream_complete("DOG:A", "hello"):
+                pass
+        with self.assertRaises(HermesUnavailableError):
+            await client.complete("DOG:A", "hello")
+
     async def test_rejects_empty_or_malformed_response_without_saving_turn(self):
         calls = 0
 
