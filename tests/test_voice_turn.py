@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.asr import ASRError, ASRTimeoutError
 from app.device_session import DeviceSession, DeviceState
-from app.hermes_client import HermesToolCall, HermesUnavailableError
+from app.chat_client import ChatToolCall, ChatUnavailableError
 from app.playback import PlaybackError
 from app.tts import TTSError
 from app.voice_turn import VoiceActionError, VoiceTurnWorker
@@ -184,7 +184,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def start_worker(
         self,
         asr,
-        hermes=None,
+        chat=None,
         tts=None,
         player=None,
         **kwargs,
@@ -193,7 +193,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.session,
             self.voice_input,
             asr,
-            hermes=hermes,
+            chat=chat,
             tts=tts,
             player=player,
             **kwargs,
@@ -213,7 +213,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.session,
             self.voice_input,
             FakeASR(),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=player,
             disconnect=disconnect,
@@ -244,7 +244,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.session,
             self.voice_input,
             FakeASR(),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=player,
             disconnect=disconnect,
@@ -272,7 +272,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.session,
             self.voice_input,
             FakeASR(),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=player,
             disconnect=disconnect,
@@ -305,7 +305,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sends_transcript_to_hermes_and_emits_response(self):
         hermes = FakeHermes(result="好的，我會坐下。")
-        worker = await self.start_worker(FakeASR(result="請你坐下"), hermes=hermes)
+        worker = await self.start_worker(FakeASR(result="請你坐下"), chat=hermes)
         await self.voice_input.utterances.put(b"pcm")
 
         response = await asyncio.wait_for(worker.next_response(), timeout=0.2)
@@ -318,13 +318,13 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_hermes_failure_recovers_listening_state(self):
-        hermes = FakeHermes(error=HermesUnavailableError("offline"))
-        worker = await self.start_worker(FakeASR(result="你好"), hermes=hermes)
+        hermes = FakeHermes(error=ChatUnavailableError("offline"))
+        worker = await self.start_worker(FakeASR(result="你好"), chat=hermes)
         await self.voice_input.utterances.put(b"pcm")
 
         await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)
 
-        self.assertEqual(worker.hermes_failures, 1)
+        self.assertEqual(worker.chat_failures, 1)
         self.assertTrue(worker.responses.empty())
         self.assertEqual(self.websocket.messages, [
             {"type": "stt", "text": "你好"},
@@ -338,7 +338,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="請你坐下"),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=player,
         )
@@ -355,7 +355,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="hello"),
-            hermes=FakeHermes(result="😘 I missed you!"),
+            chat=FakeHermes(result="😘 I missed you!"),
             tts=tts,
             player=player,
         )
@@ -374,7 +374,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="坐下"),
-            hermes=FakeHermes(result=HermesToolCall(
+            chat=FakeHermes(result=ChatToolCall(
                 "linkdog_action", {"action": "sit_down"}
             )),
             tts=tts,
@@ -396,7 +396,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="坐下"),
-            hermes=FakeHermes(result=HermesToolCall(
+            chat=FakeHermes(result=ChatToolCall(
                 "linkdog_action", {"action": "sit_down"}
             )),
             tts=tts,
@@ -420,7 +420,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="raise the volume"),
-            hermes=FakeHermes(result=HermesToolCall(
+            chat=FakeHermes(result=ChatToolCall(
                 "linkdog_volume", {"mode": "up"}
             )),
             tts=tts,
@@ -444,7 +444,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="喚醒詞是什麼"),
-            hermes=FakeHermes(result="請說小斌小斌"),
+            chat=FakeHermes(result="請說小斌小斌"),
             tts=tts,
             player=player,
         )
@@ -458,7 +458,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_tts_failure_sends_stop_and_recovers(self):
         worker = await self.start_worker(
             FakeASR(result="你好"),
-            hermes=FakeHermes(result="回答"),
+            chat=FakeHermes(result="回答"),
             tts=FakeTTS(error=TTSError("offline")),
             player=FakePlayer(),
         )
@@ -473,7 +473,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_playback_failure_is_counted_without_duplicate_recovery(self):
         worker = await self.start_worker(
             FakeASR(result="你好"),
-            hermes=FakeHermes(result="回答"),
+            chat=FakeHermes(result="回答"),
             tts=FakeTTS(),
             player=FakePlayer(error=PlaybackError("socket failed")),
         )
@@ -488,7 +488,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = BlockingPlayer()
         worker = await self.start_worker(
             FakeASR(result="你好"),
-            hermes=FakeHermes(result="這是一段很長的回答"),
+            chat=FakeHermes(result="這是一段很長的回答"),
             tts=FakeTTS(),
             player=player,
         )
@@ -508,7 +508,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         tts = FakeTTS()
         worker = await self.start_worker(
             FakeASR(result="你好"),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=FakePlayer(),
         )
@@ -553,9 +553,9 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(transcript, "下一輪")
 
-    async def test_closes_hermes_client_when_worker_is_cancelled(self):
+    async def test_closes_chat_client_when_worker_is_cancelled(self):
         hermes = FakeHermes()
-        await self.start_worker(FakeASR(), hermes=hermes)
+        await self.start_worker(FakeASR(), chat=hermes)
 
         await self.session.close()
 
@@ -571,7 +571,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="hello"),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=player,
         )
@@ -591,7 +591,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         hermes = StreamingHermes(["Just one sentence."])
         worker = await self.start_worker(
             FakeASR(result="hi"),
-            hermes=hermes,
+            chat=hermes,
             tts=FakeTTS(),
             player=FakePlayer(),
         )
@@ -602,10 +602,10 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response, "Just one sentence.")
 
     async def test_streaming_hermes_failure_recovers_listening(self):
-        hermes = StreamingHermes([], error=HermesUnavailableError("offline"))
+        hermes = StreamingHermes([], error=ChatUnavailableError("offline"))
         worker = await self.start_worker(
             FakeASR(result="hi"),
-            hermes=hermes,
+            chat=hermes,
             tts=FakeTTS(),
             player=FakePlayer(),
         )
@@ -613,7 +613,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)
 
-        self.assertEqual(worker.hermes_failures, 1)
+        self.assertEqual(worker.chat_failures, 1)
         self.assertEqual(self.websocket.messages[-1], {"type": "tts", "state": "stop"})
         self.assertEqual(self.session.state, DeviceState.LISTENING)
 
@@ -630,7 +630,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="hi"),
-            hermes=hermes,
+            chat=hermes,
             tts=tts,
             player=player,
         )
@@ -652,7 +652,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         player = FakePlayer()
         worker = await self.start_worker(
             FakeASR(result="hi"),
-            hermes=hermes,
+            chat=hermes,
             tts=FakeTTS(pcm=b"p"),
             player=player,
         )
@@ -673,7 +673,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
                 return self.result
 
         hermes = FlakyHermes(result="second answer")
-        worker = await self.start_worker(FakeASR(result="hi"), hermes=hermes)
+        worker = await self.start_worker(FakeASR(result="hi"), chat=hermes)
 
         await self.voice_input.utterances.put(b"pcm-1")
         await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)

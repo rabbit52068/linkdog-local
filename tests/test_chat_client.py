@@ -1,26 +1,30 @@
 import json
+import os
+import stat
+import tempfile
 import unittest
+from pathlib import Path
 
 import httpx
 
-from app.hermes_client import (
+from app.chat_client import (
     DEFAULT_SYSTEM_PROMPT,
-    HermesAPIClient,
-    HermesAuthError,
-    HermesResponseError,
-    HermesToolCall,
-    HermesUnavailableError,
+    ChatClient,
+    ChatAuthError,
+    ChatResponseError,
+    ChatToolCall,
+    ChatUnavailableError,
 )
 
 
-class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
+class ChatClientTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         client = getattr(self, "client", None)
         if client is not None:
             await client.close()
 
     def make_client(self, handler, max_history_turns=3):
-        self.client = HermesAPIClient(
+        self.client = ChatClient(
             base_url="http://hermes.test:8642/v1",
             api_key="test-secret",
             system_prompt="Respond briefly in Traditional Chinese.",
@@ -95,7 +99,7 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
         ])
 
     async def test_includes_explicit_provider_route(self):
-        client = HermesAPIClient(
+        client = ChatClient(
             base_url="http://hermes.test:8642/v1",
             api_key="test-secret",
             model="deepseek-v4-pro",
@@ -148,7 +152,7 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
                 }}]
             })
 
-        self.client = HermesAPIClient(
+        self.client = ChatClient(
             base_url="http://hermes.test:8642/v1",
             api_key="test-secret",
             tools=tools,
@@ -158,7 +162,7 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
 
         result = await self.client.complete("DOG:A", "坐下")
 
-        self.assertEqual(result, HermesToolCall("linkdog_action", {"action": "sit_down"}))
+        self.assertEqual(result, ChatToolCall("linkdog_action", {"action": "sit_down"}))
         self.assertEqual(requests[0]["tools"], tools)
         self.assertEqual(requests[0]["tool_choice"], "auto")
         self.assertEqual(self.client.history_for("DOG:A"), [])
@@ -197,7 +201,7 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
                 }}]
             })
 
-        self.client = HermesAPIClient(
+        self.client = ChatClient(
             base_url="http://hermes.test:8642/v1",
             api_key="test-secret",
             tools=tools,
@@ -206,31 +210,31 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
 
         result = await self.client.complete("DOG:A", "set volume to 55")
 
-        self.assertEqual(result, HermesToolCall(
+        self.assertEqual(result, ChatToolCall(
             "linkdog_volume", {"mode": "set", "volume": 55}
         ))
 
     async def test_auth_failure_has_specific_error(self):
         client = self.make_client(lambda _request: httpx.Response(401))
 
-        with self.assertRaises(HermesAuthError):
+        with self.assertRaises(ChatAuthError):
             await client.complete("DOG:A", "你好")
 
     async def test_server_and_connection_failures_are_unavailable(self):
         server_client = self.make_client(lambda _request: httpx.Response(503))
-        with self.assertRaises(HermesUnavailableError):
+        with self.assertRaises(ChatUnavailableError):
             await server_client.complete("DOG:A", "你好")
         await server_client.close()
 
         def disconnected(request):
             raise httpx.ConnectError("offline", request=request)
 
-        self.client = HermesAPIClient(
+        self.client = ChatClient(
             base_url="http://hermes.test:8642/v1",
             api_key="test-secret",
             transport=httpx.MockTransport(disconnected),
         )
-        with self.assertRaises(HermesUnavailableError):
+        with self.assertRaises(ChatUnavailableError):
             await self.client.complete("DOG:A", "你好")
 
     async def test_protocol_errors_mid_stream_are_unavailable(self):
@@ -241,10 +245,10 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
             )
 
         client = self.make_client(truncated)
-        with self.assertRaises(HermesUnavailableError):
+        with self.assertRaises(ChatUnavailableError):
             async for _delta in client.stream_complete("DOG:A", "hello"):
                 pass
-        with self.assertRaises(HermesUnavailableError):
+        with self.assertRaises(ChatUnavailableError):
             await client.complete("DOG:A", "hello")
 
     async def test_rejects_empty_or_malformed_response_without_saving_turn(self):
@@ -260,7 +264,7 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
             })
 
         client = self.make_client(handler)
-        with self.assertRaises(HermesResponseError):
+        with self.assertRaises(ChatResponseError):
             await client.complete("DOG:A", "失敗這輪")
         result = await client.complete("DOG:A", "新的一輪")
 
@@ -305,6 +309,77 @@ class HermesAPIClientTests(unittest.IsolatedAsyncioTestCase):
     def test_default_system_prompt_instructs_emotion_emoji_prefix(self):
         self.assertIn("emoji", DEFAULT_SYSTEM_PROMPT.lower())
         self.assertIn("beginning", DEFAULT_SYSTEM_PROMPT.lower())
+
+
+class ChatHistoryPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "history.json"
+        self.clients = []
+
+    async def asyncTearDown(self):
+        for client in self.clients:
+            await client.close()
+        self.tmp.cleanup()
+
+    def make_client(self, max_history_turns=2, path="default"):
+        def handler(request):
+            body = json.loads(request.content)
+            reply = "echo:" + body["messages"][-1]["content"]
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": reply}}]
+            })
+
+        client = ChatClient(
+            base_url="http://chat.test/v1",
+            max_history_turns=max_history_turns,
+            transport=httpx.MockTransport(handler),
+            history_path=self.path if path == "default" else path,
+        )
+        self.clients.append(client)
+        return client
+
+    async def test_history_survives_a_new_client(self):
+        first = self.make_client()
+        await first.complete("DOG:A", "remember me")
+
+        second = self.make_client()
+        self.assertEqual(second.history_for("DOG:A"), [
+            {"role": "user", "content": "remember me"},
+            {"role": "assistant", "content": "echo:remember me"},
+        ])
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+
+    async def test_saved_history_is_trimmed_to_the_turn_limit(self):
+        client = self.make_client(max_history_turns=1)
+        await client.complete("DOG:A", "one")
+        await client.complete("DOG:A", "two")
+
+        saved = json.loads(self.path.read_text())
+        self.assertEqual([t["content"] for t in saved["DOG:A"]], ["two", "echo:two"])
+
+    async def test_other_devices_entries_are_kept(self):
+        await self.make_client().complete("DOG:A", "from a")
+        await self.make_client().complete("DOG:B", "from b")
+
+        saved = json.loads(self.path.read_text())
+        self.assertEqual(set(saved), {"DOG:A", "DOG:B"})
+
+    async def test_memory_off_neither_loads_nor_writes(self):
+        await self.make_client().complete("DOG:A", "private")
+        before = self.path.read_text()
+
+        client = self.make_client(max_history_turns=0)
+        self.assertEqual(client.history_for("DOG:A"), [])
+        await client.complete("DOG:A", "not saved")
+        self.assertEqual(self.path.read_text(), before)
+
+    async def test_corrupt_file_is_ignored(self):
+        self.path.write_text("{not json")
+        client = self.make_client()
+        self.assertEqual(client.history_for("DOG:A"), [])
+        await client.complete("DOG:A", "fresh")
+        self.assertIn("DOG:A", json.loads(self.path.read_text()))
 
 
 if __name__ == "__main__":

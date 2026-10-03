@@ -28,6 +28,18 @@ LinkDog (ESP32-S3 + C3)
 
 Three paths are fully decoupled: swapping the adapter only affects voice/LLM/OTA; provisioning and control are untouched.
 
+### Two ways to make the dog act
+
+| | Voice path | Agent path |
+|---|---|---|
+| Trigger | Talking to the dog | An AI agent (e.g. Hermes) calling MCP tools |
+| Route | dog → adapter → chat LLM (`app/chat_client.py`) → adapter → dog | agent → `mcp_server.py` → `POST /xiaozhi/action` → dog |
+| LLM | Configured by `LINKDOG_CHAT_*` and the dashboard | The agent's own model |
+| Actions | Sit, stand, lie down, shake hands, and volume | The full firmware catalog (`app/actions.py`) |
+| Memory | Per-dog chat history in `data/history.json` (dashboard "memory" toggle) | The agent's own memory |
+
+The two paths do not share memory. The voice path talks to the LLM directly for low latency; it does not go through the agent.
+
 ## Requirements
 
 - A LinkDog robot dog (ESP32-S3 main + C3 co-processor).

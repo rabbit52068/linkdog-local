@@ -9,7 +9,7 @@ from app.device_session import DeviceSession
 from app.dashboard_settings import SettingsStore
 from app.main import (
     build_asr,
-    build_hermes_client,
+    build_chat_client,
     build_player,
     build_tts,
     build_voice_action_executor,
@@ -20,7 +20,7 @@ from app.main import (
     voice_input_enabled,
 )
 from app.asr import FasterWhisperASR
-from app.hermes_client import HermesAPIClient
+from app.chat_client import ChatClient
 from app.playback import OpusDownlinkPlayer
 from app.pocket_tts import PocketTTSBackend
 from app.tts import CommandTTSBackend
@@ -110,7 +110,8 @@ class VoiceWiringTests(unittest.TestCase):
         self.assertEqual(backend.model_name, "base")
         self.assertEqual(backend.device, "cpu")
         self.assertEqual(backend.compute_type, "int8")
-        self.assertEqual(backend.language, "zh")
+        # Unset means auto-detect (zh + en); faster-whisper expects None.
+        self.assertIsNone(backend.language)
         self.assertEqual(backend.timeout_seconds, 15.0)
 
     def test_builds_tts_from_environment(self):
@@ -207,7 +208,7 @@ class VoiceWiringTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_builds_hermes_client_from_environment(self):
+    def test_builds_chat_client_from_environment(self):
         values = {
             "LINKDOG_HERMES_API_URL": "http://127.0.0.1:9999/v1",
             "LINKDOG_HERMES_API_KEY": "local-key",
@@ -222,9 +223,9 @@ class VoiceWiringTests(unittest.TestCase):
                 patch.dict("os.environ", values, clear=True),
                 patch.object(main, "SETTINGS_STORE", empty_store),
             ):
-                client = build_hermes_client()
+                client = build_chat_client()
 
-        self.assertIsInstance(client, HermesAPIClient)
+        self.assertIsInstance(client, ChatClient)
         self.assertEqual(client.base_url, "http://127.0.0.1:9999/v1")
         self.assertEqual(client.api_key, "local-key")
         self.assertEqual(client.model, "deepseek-v4-pro")
@@ -303,6 +304,23 @@ class VoiceWiringTests(unittest.TestCase):
                 await session.close()
 
         asyncio.run(scenario())
+
+
+
+class ChatEnvTests(unittest.TestCase):
+    def test_new_chat_names_win_and_legacy_names_still_work(self):
+        from app.main import _chat_env
+
+        with patch.dict("os.environ", {"LINKDOG_HERMES_MODEL": "legacy"}, clear=True):
+            self.assertEqual(_chat_env("MODEL", "default"), "legacy")
+        with patch.dict(
+            "os.environ",
+            {"LINKDOG_HERMES_MODEL": "legacy", "LINKDOG_CHAT_MODEL": "new"},
+            clear=True,
+        ):
+            self.assertEqual(_chat_env("MODEL", "default"), "new")
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_chat_env("MODEL", "default"), "default")
 
 
 if __name__ == "__main__":

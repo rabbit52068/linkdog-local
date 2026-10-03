@@ -19,3 +19,11 @@ def _bypass_api_token(request):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_auth: run with the real token check")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_chat_history(tmp_path, monkeypatch):
+    """Never let a test read or write the real data/history.json."""
+    import app.main as main
+
+    monkeypatch.setattr(main, "HISTORY_PATH", tmp_path / "history.json")

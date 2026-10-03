@@ -738,7 +738,7 @@ class HealthRedactionTests(unittest.TestCase):
 
             session = DeviceSession("TEST:DOG", FakeWebSocket())
             worker = voice_turn.VoiceTurnWorker(
-                session, None, None, hermes=None, tts=None, player=None
+                session, None, None, chat=None, tts=None, player=None
             )
             root = ValueError(
                 f"clone failed: https://huggingface.co/api?token={SYNTHETIC_SECRET}"

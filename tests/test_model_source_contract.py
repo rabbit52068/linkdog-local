@@ -111,7 +111,7 @@ class ModelPrecedenceTests(unittest.TestCase):
                 ),
                 mock.patch.object(main, "SETTINGS_STORE", store),
             ):
-                client = main.build_hermes_client()
+                client = main.build_chat_client()
 
         self.assertEqual(client.model, "glm-5.3")
 

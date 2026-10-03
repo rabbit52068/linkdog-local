@@ -208,7 +208,7 @@ class TTSFailureTotalTests(unittest.TestCase):
                 session,
                 voice_input,
                 FakeASR(),
-                hermes=FakeHermes(),
+                chat=FakeHermes(),
                 tts=FakeTTS(error=TTSError("offline")),
                 player=FakePlayer(),
             )
@@ -239,7 +239,7 @@ class TTSFailureTotalTests(unittest.TestCase):
             websocket = FakeWebSocket()
             session = DeviceSession("TEST:DOG", websocket)
             worker = voice_turn.VoiceTurnWorker(
-                session, FakeVoiceInput(), FakeASR(), hermes=None, tts=None, player=None
+                session, FakeVoiceInput(), FakeASR(), chat=None, tts=None, player=None
             )
 
             inner = ValueError("ROOT_CAUSE_SENTINEL")

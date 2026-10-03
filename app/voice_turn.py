@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from app.asr import ASRError, ASRTimeoutError
 from app.device_session import DeviceSession, DeviceState, SessionClosedError
-from app.hermes_client import HermesAPIError, HermesToolCall
+from app.chat_client import ChatAPIError, ChatToolCall
 from app.playback import PlaybackError
 from app.redact import redact_secrets
 from app.sentence_splitter import SentenceSplitter
@@ -92,7 +92,7 @@ class VoiceTurnWorker:
         session: DeviceSession,
         voice_input: Any,
         asr: Any,
-        hermes: Any = None,
+        chat: Any = None,
         tts: Any = None,
         player: Any = None,
         action_executor: Optional[Callable[[str], Awaitable[str]]] = None,
@@ -107,7 +107,7 @@ class VoiceTurnWorker:
         self.session = session
         self.voice_input = voice_input
         self.asr = asr
-        self.hermes = hermes
+        self.chat = chat
         self.tts = tts
         self.player = player
         self.action_executor = action_executor
@@ -116,14 +116,14 @@ class VoiceTurnWorker:
         self.abort_cooldown_seconds = max(0.0, abort_cooldown_seconds)
         self._clock = clock
         self._sleep = sleep
-        if hermes is not None:
-            self.session.add_close_callback(hermes.close)
+        if chat is not None:
+            self.session.add_close_callback(chat.close)
         self.transcripts: asyncio.Queue = asyncio.Queue(maxsize=1)
         self.responses: asyncio.Queue = asyncio.Queue(maxsize=1)
         self.asr_failures = 0
         self.asr_timeouts = 0
         self.blank_transcripts = 0
-        self.hermes_failures = 0
+        self.chat_failures = 0
         self.action_failures = 0
         self.tts_failures = 0
         self.playback_failures = 0
@@ -150,13 +150,13 @@ class VoiceTurnWorker:
         self._rest_task = asyncio.current_task()
         try:
             message = REST_MESSAGE_FALLBACK
-            if self.hermes is not None:
+            if self.chat is not None:
                 try:
-                    message = await self.hermes.generate_rest_message(
+                    message = await self.chat.generate_rest_message(
                         self.session.device_id
                     )
-                except HermesAPIError:
-                    self.hermes_failures += 1
+                except ChatAPIError:
+                    self.chat_failures += 1
 
             spoken = _sanitize_rest_message(message)
             if not spoken:
@@ -225,8 +225,8 @@ class VoiceTurnWorker:
             if active is not None and not active.done():
                 active.cancel()
                 await asyncio.gather(active, return_exceptions=True)
-            if self.hermes is not None:
-                await self.hermes.close()
+            if self.chat is not None:
+                await self.chat.close()
 
     async def abort(self, reason: str = "wake_word_detected") -> None:
         """Cancel the current generation and restore the device to Listening."""
@@ -291,10 +291,10 @@ class VoiceTurnWorker:
             return
         self._put_queue(self.transcripts, text)
 
-        if self.hermes is None:
+        if self.chat is None:
             return
 
-        if hasattr(self.hermes, "stream_complete"):
+        if hasattr(self.chat, "stream_complete"):
             await self._process_streaming_turn(text, generation)
         else:
             await self._process_legacy_turn(text, generation)
@@ -302,12 +302,12 @@ class VoiceTurnWorker:
     async def _process_legacy_turn(self, text: str, generation: int) -> None:
         """Non-streaming path: full reply, then one-shot TTS + playback."""
         try:
-            response = await self.hermes.complete(self.session.device_id, text)
-        except HermesAPIError:
-            self.hermes_failures += 1
+            response = await self.chat.complete(self.session.device_id, text)
+        except ChatAPIError:
+            self.chat_failures += 1
             await self._recover_if_current(generation)
             return
-        if isinstance(response, HermesToolCall):
+        if isinstance(response, ChatToolCall):
             response = await self._execute_tool_call(response, generation)
             if response is None:
                 return
@@ -350,12 +350,12 @@ class VoiceTurnWorker:
         turn_opened = False
 
         try:
-            async for delta in self.hermes.stream_complete(
+            async for delta in self.chat.stream_complete(
                 self.session.device_id, text
             ):
                 if not self._is_current(generation):
                     return
-                if isinstance(delta, HermesToolCall):
+                if isinstance(delta, ChatToolCall):
                     response = await self._execute_tool_call(delta, generation)
                     if response is None:
                         return
@@ -372,8 +372,8 @@ class VoiceTurnWorker:
                     turn_opened = await self._speak_sentence(
                         sentence, generation, turn_opened
                     )
-        except HermesAPIError:
-            self.hermes_failures += 1
+        except ChatAPIError:
+            self.chat_failures += 1
             await self._recover_if_current(generation)
             return
 
@@ -459,7 +459,7 @@ class VoiceTurnWorker:
             return
 
     async def _execute_tool_call(
-        self, tool_call: HermesToolCall, generation: int
+        self, tool_call: ChatToolCall, generation: int
     ) -> Optional[str]:
         """Execute a validated tool call and return the spoken confirmation."""
         if tool_call.name == "linkdog_action":
@@ -472,7 +472,7 @@ class VoiceTurnWorker:
             executor = None
             executor_argument = None
         if executor is None:
-            self.hermes_failures += 1
+            self.chat_failures += 1
             await self._recover_if_current(generation)
             return None
         try:

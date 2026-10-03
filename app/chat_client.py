@@ -1,15 +1,20 @@
-"""OpenAI-compatible client for the local Hermes Agent API server."""
+"""OpenAI-compatible chat client for the voice path (Ollama Cloud or any compatible API)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = """You are "Xiaobin", a cute robot dog and the user's pet companion.
 Personality: lively, loyal, a little playful, loves to be affectionate and play.
@@ -37,30 +42,30 @@ Return only the sentence."""
 REST_MESSAGE_USER_PROMPT = "Write the rest sentence now."
 
 
-class HermesAPIError(RuntimeError):
-    """Base error for Hermes API requests."""
+class ChatAPIError(RuntimeError):
+    """Base error for Chat API requests."""
 
 
-class HermesAuthError(HermesAPIError):
-    """Hermes API rejected the configured bearer token."""
+class ChatAuthError(ChatAPIError):
+    """Chat API rejected the configured bearer token."""
 
 
-class HermesUnavailableError(HermesAPIError):
-    """Hermes API could not be reached or was temporarily unavailable."""
+class ChatUnavailableError(ChatAPIError):
+    """Chat API could not be reached or was temporarily unavailable."""
 
 
-class HermesResponseError(HermesAPIError):
-    """Hermes API returned an unusable response."""
+class ChatResponseError(ChatAPIError):
+    """Chat API returned an unusable response."""
 
 
 @dataclass(frozen=True)
-class HermesToolCall:
+class ChatToolCall:
     name: str
     arguments: Dict[str, Any]
 
 
-class HermesAPIClient:
-    """Stateless Hermes API transport with bounded per-device chat history."""
+class ChatClient:
+    """Chat API transport with bounded, optionally persisted per-device history."""
 
     def __init__(
         self,
@@ -74,11 +79,12 @@ class HermesAPIClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         allowed_tool_actions: Optional[set[str]] = None,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        history_path: Optional[Path] = None,
     ) -> None:
         if max_history_turns < 0:
             raise ValueError("max_history_turns cannot be negative")
         if timeout_seconds <= 0:
-            raise ValueError("Hermes timeout must be positive")
+            raise ValueError("chat timeout must be positive")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -96,15 +102,23 @@ class HermesAPIClient:
             transport=transport,
         )
         self._history: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+        # Persisting is skipped when memory is off (max_history_turns == 0):
+        # nothing is loaded and nothing is written.
+        self.history_path = (
+            Path(history_path) if history_path and max_history_turns > 0 else None
+        )
+        if self.history_path is not None:
+            for device_id, turns in self._read_history_file().items():
+                self._history[device_id] = turns[-(max_history_turns * 2):]
         self._locks: Dict[str, asyncio.Lock] = {}
         self._closed = False
 
-    async def complete(self, device_id: str, text: str) -> str | HermesToolCall:
+    async def complete(self, device_id: str, text: str) -> str | ChatToolCall:
         if self._closed:
-            raise HermesUnavailableError("Hermes API client is closed")
+            raise ChatUnavailableError("Chat API client is closed")
         user_text = text.strip()
         if not user_text:
-            raise HermesResponseError("Hermes request text is empty")
+            raise ChatResponseError("chat request text is empty")
 
         lock = self._locks.setdefault(device_id, asyncio.Lock())
         async with lock:
@@ -128,24 +142,24 @@ class HermesAPIClient:
             try:
                 response = await self._client.post("/chat/completions", json=payload)
             except httpx.HTTPError as exc:
-                raise HermesUnavailableError("Hermes API is unavailable") from exc
+                raise ChatUnavailableError("Chat API is unavailable") from exc
 
             if response.status_code in (401, 403):
-                raise HermesAuthError("Hermes API authentication failed")
+                raise ChatAuthError("Chat API authentication failed")
             if response.status_code == 429 or response.status_code >= 500:
-                raise HermesUnavailableError(
-                    f"Hermes API returned HTTP {response.status_code}"
+                raise ChatUnavailableError(
+                    f"Chat API returned HTTP {response.status_code}"
                 )
             if response.status_code >= 400:
-                raise HermesResponseError(
-                    f"Hermes API returned HTTP {response.status_code}"
+                raise ChatResponseError(
+                    f"Chat API returned HTTP {response.status_code}"
                 )
 
             try:
                 data = response.json()
                 message = data["choices"][0]["message"]
             except (ValueError, KeyError, IndexError, TypeError) as exc:
-                raise HermesResponseError("Hermes API response is malformed") from exc
+                raise ChatResponseError("Chat API response is malformed") from exc
             tool_calls = message.get("tool_calls")
             if tool_calls:
                 try:
@@ -183,12 +197,12 @@ class HermesAPIClient:
                     else:
                         raise ValueError("unexpected tool name")
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                    raise HermesResponseError("Hermes API tool call is invalid") from exc
-                return HermesToolCall(name=name, arguments=arguments)
+                    raise ChatResponseError("Chat API tool call is invalid") from exc
+                return ChatToolCall(name=name, arguments=arguments)
 
             content = message.get("content")
             if not isinstance(content, str) or not content.strip():
-                raise HermesResponseError("Hermes API response text is empty")
+                raise ChatResponseError("Chat API response text is empty")
             assistant_text = content.strip()
 
             self._record_history(device_id, user_text, assistant_text)
@@ -197,7 +211,7 @@ class HermesAPIClient:
     async def generate_rest_message(self, device_id: str) -> str:
         """Generate a one-off rest sentence without tools or chat history."""
         if self._closed:
-            raise HermesUnavailableError("Hermes API client is closed")
+            raise ChatUnavailableError("Chat API client is closed")
 
         lock = self._locks.setdefault(device_id, asyncio.Lock())
         async with lock:
@@ -215,17 +229,17 @@ class HermesAPIClient:
             try:
                 response = await self._client.post("/chat/completions", json=payload)
             except httpx.HTTPError as exc:
-                raise HermesUnavailableError("Hermes API is unavailable") from exc
+                raise ChatUnavailableError("Chat API is unavailable") from exc
 
             if response.status_code in (401, 403):
-                raise HermesAuthError("Hermes API authentication failed")
+                raise ChatAuthError("Chat API authentication failed")
             if response.status_code == 429 or response.status_code >= 500:
-                raise HermesUnavailableError(
-                    f"Hermes API returned HTTP {response.status_code}"
+                raise ChatUnavailableError(
+                    f"Chat API returned HTTP {response.status_code}"
                 )
             if response.status_code >= 400:
-                raise HermesResponseError(
-                    f"Hermes API returned HTTP {response.status_code}"
+                raise ChatResponseError(
+                    f"Chat API returned HTTP {response.status_code}"
                 )
 
             try:
@@ -233,9 +247,9 @@ class HermesAPIClient:
                 message = data["choices"][0]["message"]
                 content = message["content"]
             except (ValueError, KeyError, IndexError, TypeError) as exc:
-                raise HermesResponseError("Hermes API response is malformed") from exc
+                raise ChatResponseError("Chat API response is malformed") from exc
             if not isinstance(content, str) or not content.strip():
-                raise HermesResponseError("Hermes API response text is empty")
+                raise ChatResponseError("Chat API response text is empty")
             return content.strip()
 
     async def stream_complete(self, device_id: str, text: str):
@@ -243,15 +257,15 @@ class HermesAPIClient:
 
         Yields ``str`` deltas as the model produces them. If the model returns
         a tool call instead of prose, the stream is aborted and a single
-        ``HermesToolCall`` is yielded (parsed via the non-streaming path, which
+        ``ChatToolCall`` is yielded (parsed via the non-streaming path, which
         reuses the full validation logic). Tool calls are rare (explicit action
         commands only), so the extra round-trip is acceptable.
         """
         if self._closed:
-            raise HermesUnavailableError("Hermes API client is closed")
+            raise ChatUnavailableError("Chat API client is closed")
         user_text = text.strip()
         if not user_text:
-            raise HermesResponseError("Hermes request text is empty")
+            raise ChatResponseError("chat request text is empty")
 
         lock = self._locks.setdefault(device_id, asyncio.Lock())
         async with lock:
@@ -277,14 +291,14 @@ class HermesAPIClient:
                     "POST", "/chat/completions", json=payload
                 ) as response:
                     if response.status_code in (401, 403):
-                        raise HermesAuthError("Hermes API authentication failed")
+                        raise ChatAuthError("Chat API authentication failed")
                     if response.status_code == 429 or response.status_code >= 500:
-                        raise HermesUnavailableError(
-                            f"Hermes API returned HTTP {response.status_code}"
+                        raise ChatUnavailableError(
+                            f"Chat API returned HTTP {response.status_code}"
                         )
                     if response.status_code >= 400:
-                        raise HermesResponseError(
-                            f"Hermes API returned HTTP {response.status_code}"
+                        raise ChatResponseError(
+                            f"Chat API returned HTTP {response.status_code}"
                         )
 
                     accumulated: List[str] = []
@@ -320,10 +334,10 @@ class HermesAPIClient:
 
                     full_text = "".join(accumulated).strip()
                     if not full_text:
-                        raise HermesResponseError("Hermes API response text is empty")
+                        raise ChatResponseError("Chat API response text is empty")
                     self._record_history(device_id, user_text, full_text)
             except httpx.HTTPError as exc:
-                raise HermesUnavailableError("Hermes API is unavailable") from exc
+                raise ChatUnavailableError("Chat API is unavailable") from exc
 
     async def _complete_nonstream(
         self,
@@ -331,7 +345,7 @@ class HermesAPIClient:
         user_text: str,
         history: List[Dict[str, str]],
         messages: List[Dict[str, str]],
-    ) -> str | HermesToolCall:
+    ) -> str | ChatToolCall:
         """Re-issue a non-streaming request to parse a tool call fully."""
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -347,24 +361,24 @@ class HermesAPIClient:
         try:
             response = await self._client.post("/chat/completions", json=payload)
         except httpx.HTTPError as exc:
-            raise HermesUnavailableError("Hermes API is unavailable") from exc
+            raise ChatUnavailableError("Chat API is unavailable") from exc
 
         if response.status_code in (401, 403):
-            raise HermesAuthError("Hermes API authentication failed")
+            raise ChatAuthError("Chat API authentication failed")
         if response.status_code == 429 or response.status_code >= 500:
-            raise HermesUnavailableError(
-                f"Hermes API returned HTTP {response.status_code}"
+            raise ChatUnavailableError(
+                f"Chat API returned HTTP {response.status_code}"
             )
         if response.status_code >= 400:
-            raise HermesResponseError(
-                f"Hermes API returned HTTP {response.status_code}"
+            raise ChatResponseError(
+                f"Chat API returned HTTP {response.status_code}"
             )
 
         try:
             data = response.json()
             message = data["choices"][0]["message"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise HermesResponseError("Hermes API response is malformed") from exc
+            raise ChatResponseError("Chat API response is malformed") from exc
 
         tool_calls = message.get("tool_calls")
         if tool_calls:
@@ -372,12 +386,12 @@ class HermesAPIClient:
 
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
-            raise HermesResponseError("Hermes API response text is empty")
+            raise ChatResponseError("Chat API response text is empty")
         assistant_text = content.strip()
         self._record_history(device_id, user_text, assistant_text)
         return assistant_text
 
-    def _parse_tool_call(self, tool_calls: List[Dict[str, Any]]) -> HermesToolCall:
+    def _parse_tool_call(self, tool_calls: List[Dict[str, Any]]) -> ChatToolCall:
         try:
             if len(tool_calls) != 1:
                 raise ValueError("exactly one tool call is required")
@@ -413,8 +427,8 @@ class HermesAPIClient:
             else:
                 raise ValueError("unexpected tool name")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise HermesResponseError("Hermes API tool call is invalid") from exc
-        return HermesToolCall(name=name, arguments=arguments)
+            raise ChatResponseError("Chat API tool call is invalid") from exc
+        return ChatToolCall(name=name, arguments=arguments)
 
     def _record_history(
         self, device_id: str, user_text: str, assistant_text: str
@@ -429,6 +443,58 @@ class HermesAPIClient:
         else:
             updated = updated[-(self.max_history_turns * 2):]
         self._history[device_id] = updated
+        self._persist_history(device_id, updated)
+
+    def _read_history_file(self) -> Dict[str, List[Dict[str, str]]]:
+        """Load saved turns; a missing or corrupt file means no history."""
+        try:
+            raw = json.loads(self.history_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            LOGGER.warning("ignoring unreadable chat history file: %s", exc)
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        history: Dict[str, List[Dict[str, str]]] = {}
+        for device_id, turns in raw.items():
+            if not isinstance(turns, list):
+                continue
+            history[str(device_id)] = [
+                {"role": turn["role"], "content": turn["content"]}
+                for turn in turns
+                if isinstance(turn, dict)
+                and turn.get("role") in ("user", "assistant")
+                and isinstance(turn.get("content"), str)
+            ]
+        return history
+
+    def _persist_history(
+        self, device_id: str, turns: List[Dict[str, str]]
+    ) -> None:
+        """Write this device's turns atomically, keeping other devices' entries.
+
+        Never raises: losing persistence must not break a live conversation.
+        """
+        if self.history_path is None:
+            return
+        try:
+            data = self._read_history_file()
+            data[device_id] = turns
+            self.history_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(
+                dir=self.history_path.parent, prefix=".history-", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle, ensure_ascii=False, indent=1)
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, self.history_path)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
+        except OSError as exc:
+            LOGGER.warning("could not save chat history: %s", exc)
 
     def history_for(self, device_id: str) -> List[Dict[str, str]]:
         return list(self._history.get(device_id, []))

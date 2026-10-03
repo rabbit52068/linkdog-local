@@ -17,7 +17,7 @@ from app.audio_codec import OpusCodec
 from app.auth import require_token
 from app.dashboard_settings import DEFAULT_MODEL, DashboardSettings, SettingsStore
 from app.device_session import DeviceSession, SessionClosedError
-from app.hermes_client import DEFAULT_SYSTEM_PROMPT, HermesAPIClient
+from app.chat_client import DEFAULT_SYSTEM_PROMPT, ChatClient
 from app.hf_token import credential_provenance
 from app.model_catalog import CatalogUpstreamError, OllamaModelCatalog
 from app.playback import OpusDownlinkPlayer
@@ -36,6 +36,19 @@ from app.voice_turn import (
 )
 
 app = FastAPI(title="hermes-linkdog")
+
+
+def _chat_env(name: str, default: str = "") -> str:
+    """Read LINKDOG_CHAT_<name>, falling back to the legacy LINKDOG_HERMES_<name>.
+
+    The voice path talks to an OpenAI-compatible endpoint directly, not to
+    Hermes; the old names are still honoured so existing .env files keep working.
+    """
+    for key in (f"LINKDOG_CHAT_{name}", f"LINKDOG_HERMES_{name}"):
+        value = os.environ.get(key)
+        if value is not None:
+            return value
+    return default
 
 def _detect_lan_ip() -> str:
     """Return this host's LAN IP by opening a UDP socket to a public address."""
@@ -61,6 +74,10 @@ SETTINGS_STORE = SettingsStore(
         str(Path(__file__).resolve().parent.parent / "data" / "settings.json"),
     ))
 )
+HISTORY_PATH = Path(os.environ.get(
+    "LINKDOG_HISTORY_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "history.json"),
+))
 app.mount(
     "/dashboard/assets",
     StaticFiles(directory=str(DASHBOARD_DIR)),
@@ -76,7 +93,7 @@ ACTION_TIMEOUT_SECONDS = float(os.environ.get("LINKDOG_ACTION_TIMEOUT", "8"))
 PENDING_ACTIONS: Dict[int, Tuple[str, asyncio.Future]] = {}
 ACTION_LOCKS: Dict[str, asyncio.Lock] = {}
 _POCKET_TTS_BACKEND: Any = None
-MODEL_CATALOG = OllamaModelCatalog(os.environ.get("LINKDOG_HERMES_API_KEY", ""))
+MODEL_CATALOG = OllamaModelCatalog(_chat_env("API_KEY", ""))
 
 VOICE_ACTIONS = ("sit_down", "stand_up", "get_down", "shake_hands")
 VOICE_ACTION_CONFIRMATIONS = {
@@ -171,11 +188,11 @@ def load_dashboard_settings() -> DashboardSettings:
     return DashboardSettings(
         agent_name="Xiaobin",
         system_prompt=DEFAULT_SYSTEM_PROMPT,
-        model=os.environ.get("LINKDOG_HERMES_MODEL", DEFAULT_MODEL),
-        api_url=os.environ.get("LINKDOG_HERMES_API_URL", ""),
+        model=_chat_env("MODEL", DEFAULT_MODEL),
+        api_url=_chat_env("API_URL", ""),
         memory_enabled=True,
         max_history_turns=int(
-            os.environ.get("LINKDOG_HERMES_HISTORY_TURNS", "6")
+            _chat_env("HISTORY_TURNS", "6")
         ),
         volume=int(os.environ.get("LINKDOG_DEFAULT_VOLUME", "70")),
     )
@@ -241,7 +258,7 @@ async def disconnect_device(session: DeviceSession) -> None:
 
 
 def build_asr() -> FasterWhisperASR:
-    language = _resolve_asr_language(os.environ.get("LINKDOG_ASR_LANGUAGE", "zh"))
+    language = _resolve_asr_language(os.environ.get("LINKDOG_ASR_LANGUAGE", "auto"))
     return FasterWhisperASR(
         model_name=os.environ.get("LINKDOG_ASR_MODEL", "base"),
         device=os.environ.get("LINKDOG_ASR_DEVICE", "cpu"),
@@ -293,23 +310,22 @@ def build_player(session: DeviceSession) -> OpusDownlinkPlayer:
     return OpusDownlinkPlayer(session, codec, frame_duration_ms=60)
 
 
-def build_hermes_client() -> HermesAPIClient:
+def build_chat_client() -> ChatClient:
     settings = load_dashboard_settings()
-    return HermesAPIClient(
-        base_url=settings.api_url.strip() or os.environ.get(
-            "LINKDOG_HERMES_API_URL",
-            "http://127.0.0.1:8642/v1",
-        ),
-        api_key=os.environ.get("LINKDOG_HERMES_API_KEY", ""),
+    return ChatClient(
+        base_url=settings.api_url.strip()
+        or _chat_env("API_URL", "http://127.0.0.1:8642/v1"),
+        api_key=_chat_env("API_KEY", ""),
         model=settings.model,
-        provider=os.environ.get("LINKDOG_HERMES_PROVIDER", "ollama-cloud") or None,
+        provider=_chat_env("PROVIDER") or None,
         system_prompt=build_system_prompt(settings),
         max_history_turns=(
             settings.max_history_turns if settings.memory_enabled else 0
         ),
-        timeout_seconds=float(os.environ.get("LINKDOG_HERMES_TIMEOUT", "60")),
+        timeout_seconds=float(_chat_env("TIMEOUT", "60")),
         tools=VOICE_ACTION_TOOL,
         allowed_tool_actions=set(VOICE_ACTIONS),
+        history_path=HISTORY_PATH,
     )
 
 
@@ -972,7 +988,7 @@ async def ws_endpoint(ws: WebSocket):
             session,
             voice_input,
             build_asr(),
-            hermes=build_hermes_client(),
+            chat=build_chat_client(),
             tts=build_tts(),
             player=player,
             action_executor=build_voice_action_executor(device_id),

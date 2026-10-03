@@ -211,7 +211,7 @@ class DashboardApiTests(unittest.TestCase):
             "TEST:DOG", {"mode": "set", "volume": 65}
         )
 
-    def test_build_hermes_client_uses_dashboard_runtime_settings(self):
+    def test_build_chat_client_uses_dashboard_runtime_settings(self):
         self.store.save(DashboardSettings(
             agent_name="Buddy",
             system_prompt="A custom role.",
@@ -224,7 +224,7 @@ class DashboardApiTests(unittest.TestCase):
         ))
 
         with patch.dict("os.environ", {"LINKDOG_HERMES_API_KEY": "test"}, clear=True):
-            client = main.build_hermes_client()
+            client = main.build_chat_client()
 
         self.assertEqual(client.model, "qwen3.5:cloud")
         self.assertEqual(client.system_prompt, "A custom role.")
