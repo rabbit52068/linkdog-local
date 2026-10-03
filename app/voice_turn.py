@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import time
-import traceback
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 

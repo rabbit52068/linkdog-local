@@ -23,6 +23,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from app import state
+from app.routes import device
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,43 +60,40 @@ class ModelPrecedenceTests(unittest.TestCase):
     def test_settings_json_beats_a_conflicting_environment_value(self):
         with tempfile.TemporaryDirectory() as directory:
             store = _save(_settings_path(directory), "glm-5.3")
-            import app.main as main
 
             with (
                 mock.patch.dict(
                     "os.environ", {"LINKDOG_HERMES_MODEL": "env-loses"}, clear=False
                 ),
-                mock.patch.object(main, "SETTINGS_STORE", store),
+                mock.patch.object(state, "SETTINGS_STORE", store),
             ):
-                settings = main.load_dashboard_settings()
+                settings = state.load_dashboard_settings()
 
         self.assertEqual(settings.model, "glm-5.3")
 
     def test_environment_value_is_used_when_no_settings_file_exists(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SettingsStore(_settings_path(directory))  # never saved
-            import app.main as main
 
             with (
                 mock.patch.dict(
                     "os.environ", {"LINKDOG_HERMES_MODEL": "env-only"}, clear=False
                 ),
-                mock.patch.object(main, "SETTINGS_STORE", store),
+                mock.patch.object(state, "SETTINGS_STORE", store),
             ):
-                settings = main.load_dashboard_settings()
+                settings = state.load_dashboard_settings()
 
         self.assertEqual(settings.model, "env-only")
 
     def test_default_model_is_used_when_neither_source_provides_one(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SettingsStore(_settings_path(directory))  # never saved
-            import app.main as main
 
             with (
                 mock.patch.dict("os.environ", {}, clear=True),
-                mock.patch.object(main, "SETTINGS_STORE", store),
+                mock.patch.object(state, "SETTINGS_STORE", store),
             ):
-                settings = main.load_dashboard_settings()
+                settings = state.load_dashboard_settings()
 
         self.assertEqual(settings.model, DEFAULT_MODEL)
 
@@ -101,7 +101,6 @@ class ModelPrecedenceTests(unittest.TestCase):
         """The value that reaches the client is the one ``settings.json`` holds."""
         with tempfile.TemporaryDirectory() as directory:
             store = _save(_settings_path(directory), "glm-5.3")
-            import app.main as main
 
             with (
                 mock.patch.dict(
@@ -109,9 +108,9 @@ class ModelPrecedenceTests(unittest.TestCase):
                     {"LINKDOG_HERMES_MODEL": "env-loses", "LINKDOG_HERMES_API_KEY": "k"},
                     clear=False,
                 ),
-                mock.patch.object(main, "SETTINGS_STORE", store),
+                mock.patch.object(state, "SETTINGS_STORE", store),
             ):
-                client = main.build_chat_client()
+                client = device.build_chat_client()
 
         self.assertEqual(client.model, "glm-5.3")
 
@@ -151,13 +150,12 @@ class RetiredModelRecoveryTests(unittest.TestCase):
         """Recovery path: delete settings.json and the fallback is catalog-valid."""
         with tempfile.TemporaryDirectory() as directory:
             store = SettingsStore(_settings_path(directory))
-            import app.main as main
 
             with (
                 mock.patch.dict("os.environ", {}, clear=True),
-                mock.patch.object(main, "SETTINGS_STORE", store),
+                mock.patch.object(state, "SETTINGS_STORE", store),
             ):
-                settings = main.load_dashboard_settings()
+                settings = state.load_dashboard_settings()
 
         # This is exactly what the operator gets after removing the file, and it
         # must be a model the dashboard will accept back.
@@ -174,10 +172,9 @@ class RetiredModelRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = _settings_path(directory)
             store = _save(path, "deepseek-v4-flash:0731")
-            import app.main as main
 
-            with mock.patch.object(main, "SETTINGS_STORE", store):
-                settings = main.load_dashboard_settings()
+            with mock.patch.object(state, "SETTINGS_STORE", store):
+                settings = state.load_dashboard_settings()
 
         self.assertEqual(settings.model, "deepseek-v4-flash:0731")
 

@@ -42,6 +42,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from app import state
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -695,15 +696,14 @@ class ModelSingleSourceTests(unittest.TestCase):
     """One authoritative model value, and a fallback the dashboard accepts."""
 
     def test_default_model_is_shared_by_both_code_defaults(self):
-        """dashboard_settings.DEFAULT_MODEL and main's fallback must agree."""
-        from app import main
+        """dashboard_settings.DEFAULT_MODEL and the state loader's fallback must agree."""
         from app.dashboard_settings import DEFAULT_MODEL
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch.object(main, "SETTINGS_STORE", _missing_store()),
+            patch.object(state, "SETTINGS_STORE", _missing_store()),
         ):
-            settings = main.load_dashboard_settings()
+            settings = state.load_dashboard_settings()
 
         self.assertEqual(settings.model, DEFAULT_MODEL)
         self.assertEqual(DEFAULT_MODEL, "deepseek-v4.1-flash")
@@ -727,7 +727,7 @@ class ModelSingleSourceTests(unittest.TestCase):
 
 def _missing_store():
     """A SettingsStore whose file does not exist, forcing the env fallback path."""
-    from app.main import SettingsStore
+    from app.dashboard_settings import SettingsStore
 
     return SettingsStore(Path("/nonexistent") / "settings.json")
 

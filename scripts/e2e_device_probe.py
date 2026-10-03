@@ -203,7 +203,7 @@ async def run(url: str, pcm: bytes, text_note: str, idle_wait: float, out_dir: P
             # the live ASR config (model / compute_type / language) instead of a guess.
             # Note: FasterWhisperASR's first arg is `model_name`, NOT `model_size`, and
             # transcribe() is a coroutine — forgetting `await` prints a <coroutine ...>.
-            from app.main import build_asr
+            from app.routes.device import build_asr
 
             text = await build_asr().transcribe(bytes(pcm_out))
             print(f"[probe] ASR feedback = {text!r}")

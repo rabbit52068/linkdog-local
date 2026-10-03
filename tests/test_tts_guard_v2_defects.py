@@ -27,6 +27,8 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app import state
+from app.routes import device, health
 import app.voice_turn as voice_turn
 from app.pocket_tts import PocketTTSBackend
 from app.redact import redact_secrets
@@ -70,9 +72,9 @@ class BuildTTSWiringTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
-            backend = main.build_tts()
+            backend = device.build_tts()
 
         self.assertIsInstance(backend, PocketTTSBackend)
         # '  COSETTE  ' must arrive canonicalised; a raw-env mutant yields
@@ -86,9 +88,9 @@ class BuildTTSWiringTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
-            backend = main.build_tts()
+            backend = device.build_tts()
 
         self.assertEqual(backend.voice, "cosette")
 
@@ -97,9 +99,9 @@ class BuildTTSWiringTests(unittest.TestCase):
         values = {"LINKDOG_TTS_BACKEND": "   "}
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
-            backend = main.build_tts()
+            backend = device.build_tts()
 
         self.assertNotIsInstance(backend, PocketTTSBackend)
 
@@ -110,40 +112,40 @@ class BuildTTSWiringTests(unittest.TestCase):
         # The `_POCKET_TTS_BACKEND` patch must wrap BOTH calls: leaving the
         # inner context restores the attribute to its previous value and would
         # clear the cache between calls, which would test nothing.
-        with patch.object(main, "_POCKET_TTS_BACKEND", None):
+        with patch.object(state, "POCKET_TTS_BACKEND", None):
             with patch.dict(
                 "os.environ",
                 {"LINKDOG_TTS_BACKEND": "pocket", "LINKDOG_POCKET_VOICE": "COSETTE"},
                 clear=True,
             ):
-                first = main.build_tts()
+                first = device.build_tts()
 
             with patch.dict(
                 "os.environ",
                 {"LINKDOG_TTS_BACKEND": "pocket", "LINKDOG_POCKET_VOICE": " cosette "},
                 clear=True,
             ):
-                second = main.build_tts()
+                second = device.build_tts()
 
         self.assertIsInstance(first, PocketTTSBackend)
         self.assertEqual(first.voice, "cosette")
         self.assertIs(first, second)
 
     def test_build_tts_rebuilds_when_normalised_voice_changes(self):
-        with patch.object(main, "_POCKET_TTS_BACKEND", None):
+        with patch.object(state, "POCKET_TTS_BACKEND", None):
             with patch.dict(
                 "os.environ",
                 {"LINKDOG_TTS_BACKEND": "pocket", "LINKDOG_POCKET_VOICE": "cosette"},
                 clear=True,
             ):
-                first = main.build_tts()
+                first = device.build_tts()
 
             with patch.dict(
                 "os.environ",
                 {"LINKDOG_TTS_BACKEND": "pocket", "LINKDOG_POCKET_VOICE": "alba"},
                 clear=True,
             ):
-                second = main.build_tts()
+                second = device.build_tts()
 
         self.assertEqual(second.voice, "alba")
         self.assertIsNot(first, second)
@@ -432,11 +434,11 @@ class RedactSecretsTests(unittest.TestCase):
 
 class HealthRedactionTests(unittest.TestCase):
     def setUp(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
         self.client = TestClient(main.app)
 
     def tearDown(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
 
     def test_health_never_exposes_secret_from_backend_last_error(self):
         # Pre-fix: last_error was published verbatim -> secret leaked = True.
@@ -455,7 +457,7 @@ class HealthRedactionTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
         ):
             response = self.client.get("/api/health")
 
@@ -484,7 +486,7 @@ class HealthRedactionTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
         ):
             response = self.client.get("/api/health")
 
@@ -512,9 +514,9 @@ class HealthRedactionTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
         ):
-            snapshot = main._tts_health_snapshot()
+            snapshot = health._tts_health_snapshot()
 
         self.assertIn("cosette.wav", snapshot["voice"])
         self.assertNotIn(SYNTHETIC_SECRET, snapshot["voice"])
@@ -551,10 +553,10 @@ class HealthRedactionTests(unittest.TestCase):
         )
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
-            patch.object(main, "credential_provenance", lambda env=None: fake),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
+            patch.object(health, "credential_provenance", lambda env=None: fake),
         ):
-            snapshot = main._tts_health_snapshot()
+            snapshot = health._tts_health_snapshot()
 
         # The live view: what the Hub resolves right now.
         self.assertEqual(snapshot["credential"]["source"], hf_token.SOURCE_HUB_CACHE)
@@ -588,10 +590,10 @@ class HealthRedactionTests(unittest.TestCase):
 
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
-            patch.object(main, "credential_provenance", exploding_probe),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
+            patch.object(health, "credential_provenance", exploding_probe),
         ):
-            snapshot = main._tts_health_snapshot()
+            snapshot = health._tts_health_snapshot()
 
         self.assertEqual(snapshot["credential"]["source"], "unknown")
         self.assertIsNone(snapshot["credential"]["durable"])
@@ -604,8 +606,8 @@ class HealthRedactionTests(unittest.TestCase):
             load_status="ready",
             last_error=None,
         )
-        self.assertIsNone(main.credential_source_from_backend(backend))
-        self.assertIsNone(main.credential_source_from_backend(None))
+        self.assertIsNone(health.credential_source_from_backend(backend))
+        self.assertIsNone(health.credential_source_from_backend(None))
 
     def test_pocket_backend_records_source_when_diagnosing_a_failure(self):
         """The R6 seam itself: ``_diagnose_cloning`` must not drop the source."""
@@ -763,11 +765,11 @@ class HealthRedactionTests(unittest.TestCase):
 
 class CatalogFailedLoadTests(unittest.TestCase):
     def setUp(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
         self.client = TestClient(main.app)
 
     def tearDown(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
 
     def _health_with(self, voice, load_status):
         backend = SimpleNamespace(
@@ -782,7 +784,7 @@ class CatalogFailedLoadTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
         ):
             return self.client.get("/api/health").json()["tts"]
 

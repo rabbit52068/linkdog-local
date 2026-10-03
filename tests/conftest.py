@@ -24,6 +24,6 @@ def pytest_configure(config):
 @pytest.fixture(autouse=True)
 def _isolate_chat_history(tmp_path, monkeypatch):
     """Never let a test read or write the real data/history.json."""
-    import app.main as main
+    from app import state
 
-    monkeypatch.setattr(main, "HISTORY_PATH", tmp_path / "history.json")
+    monkeypatch.setattr(state, "HISTORY_PATH", tmp_path / "history.json")

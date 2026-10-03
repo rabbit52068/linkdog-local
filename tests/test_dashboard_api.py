@@ -8,13 +8,15 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app import state
+from app.routes import control, device
 from app.dashboard_settings import DashboardSettings, SettingsStore
 from app.model_catalog import CatalogResult, CatalogUpstreamError
 
 
 class DashboardApiTests(unittest.TestCase):
     def setUp(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
         self.directory = tempfile.TemporaryDirectory()
         defaults = DashboardSettings(
             agent_name="Xiaobin",
@@ -31,7 +33,7 @@ class DashboardApiTests(unittest.TestCase):
             defaults=defaults,
         )
         self.store.save(defaults)
-        self.store_patch = patch.object(main, "SETTINGS_STORE", self.store)
+        self.store_patch = patch.object(state, "SETTINGS_STORE", self.store)
         self.store_patch.start()
         self.catalog = SimpleNamespace(get_models=AsyncMock(return_value=CatalogResult(
             models=(
@@ -43,12 +45,12 @@ class DashboardApiTests(unittest.TestCase):
             ),
             stale=False,
         )))
-        self.catalog_patch = patch.object(main, "MODEL_CATALOG", self.catalog)
+        self.catalog_patch = patch.object(state, "MODEL_CATALOG", self.catalog)
         self.catalog_patch.start()
         self.client = TestClient(main.app)
 
     def tearDown(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
         self.catalog_patch.stop()
         self.store_patch.stop()
         self.directory.cleanup()
@@ -84,7 +86,7 @@ class DashboardApiTests(unittest.TestCase):
             stale=True,
         )))
 
-        with patch.object(main, "MODEL_CATALOG", catalog, create=True):
+        with patch.object(state, "MODEL_CATALOG", catalog, create=True):
             response = self.client.get("/api/models")
 
         self.assertEqual(response.status_code, 200)
@@ -99,7 +101,7 @@ class DashboardApiTests(unittest.TestCase):
             side_effect=CatalogUpstreamError("catalog unavailable")
         ))
 
-        with patch.object(main, "MODEL_CATALOG", catalog, create=True):
+        with patch.object(state, "MODEL_CATALOG", catalog, create=True):
             response = self.client.get("/api/models")
 
         self.assertEqual(response.status_code, 503)
@@ -108,15 +110,15 @@ class DashboardApiTests(unittest.TestCase):
     def test_load_dashboard_settings_environment_fallback_uses_default_model(self):
         empty_store = SettingsStore(Path(self.directory.name) / "missing.json")
         with (
-            patch.object(main, "SETTINGS_STORE", empty_store),
+            patch.object(state, "SETTINGS_STORE", empty_store),
             patch.dict("os.environ", {}, clear=True),
         ):
-            settings = main.load_dashboard_settings()
+            settings = state.load_dashboard_settings()
 
         # Must be the shared constant, not a stale literal: the fallback is
         # only reachable when settings.json is absent, and whatever it returns
         # has to be a model PUT /api/settings will accept back.
-        self.assertEqual(settings.model, main.DEFAULT_MODEL)
+        self.assertEqual(settings.model, state.DEFAULT_MODEL)
 
     def test_get_settings_returns_persisted_values_and_device_status(self):
         response = self.client.get("/api/settings")
@@ -129,7 +131,7 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(data["connected_device_details"], [])
 
     def test_get_settings_returns_connected_device_mac_and_ip(self):
-        main.ACTIVE_SESSIONS["TEST:DOG"] = SimpleNamespace(
+        state.ACTIVE_SESSIONS["TEST:DOG"] = SimpleNamespace(
             ip_address="10.1.1.42"
         )
 
@@ -196,10 +198,10 @@ class DashboardApiTests(unittest.TestCase):
     def test_put_settings_applies_volume_to_connected_device(self):
         payload = self.store.load().to_dict()
         payload["volume"] = 65
-        main.ACTIVE_SESSIONS["TEST:DOG"] = object()
+        state.ACTIVE_SESSIONS["TEST:DOG"] = object()
 
         with patch.object(
-            main,
+            control,
             "execute_voice_volume",
             new=AsyncMock(return_value="Volume set to 65 percent."),
         ) as execute:
@@ -224,7 +226,7 @@ class DashboardApiTests(unittest.TestCase):
         ))
 
         with patch.dict("os.environ", {"LINKDOG_HERMES_API_KEY": "test"}, clear=True):
-            client = main.build_chat_client()
+            client = device.build_chat_client()
 
         self.assertEqual(client.model, "qwen3.5:cloud")
         self.assertEqual(client.system_prompt, "A custom role.")
@@ -241,11 +243,11 @@ class DashboardApiTests(unittest.TestCase):
         ))
 
         with patch.object(
-            main,
+            control,
             "execute_voice_volume",
             new=AsyncMock(return_value="Volume set to 60 percent."),
         ) as execute:
-            asyncio.run(main.apply_saved_volume("TEST:DOG"))
+            asyncio.run(control.apply_saved_volume("TEST:DOG"))
 
         execute.assert_awaited_once_with(
             "TEST:DOG", {"mode": "set", "volume": 60}

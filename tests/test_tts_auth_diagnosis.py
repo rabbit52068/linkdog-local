@@ -595,7 +595,8 @@ class HealthExposesDiagnosisTests(unittest.TestCase):
     def test_health_reports_diagnosis_fields_for_pocket(self):
         from unittest import mock
 
-        import app.main as main
+        from app import state
+        from app.routes import health
 
         class FakeBackend:
             load_status = "failed"
@@ -610,9 +611,9 @@ class HealthExposesDiagnosisTests(unittest.TestCase):
             "LINKDOG_POCKET_VOICE": "/tmp/voice.wav",
         }
         with mock.patch.dict("os.environ", env, clear=False), mock.patch.object(
-            main, "_POCKET_TTS_BACKEND", FakeBackend()
+            state, "POCKET_TTS_BACKEND", FakeBackend()
         ):
-            snapshot = main._tts_health_snapshot()
+            snapshot = health._tts_health_snapshot()
 
         self.assertEqual(snapshot["cloning_diagnosis"], NO_TOKEN)
         self.assertEqual(snapshot["model_status"], "failed")
@@ -622,10 +623,10 @@ class HealthExposesDiagnosisTests(unittest.TestCase):
     def test_non_pocket_backend_reports_null_diagnosis(self):
         from unittest import mock
 
-        import app.main as main
+        from app.routes import health
 
         with mock.patch.dict("os.environ", {"LINKDOG_TTS_BACKEND": "edge"}, clear=False):
-            snapshot = main._tts_health_snapshot()
+            snapshot = health._tts_health_snapshot()
 
         self.assertIsNone(snapshot["cloning_diagnosis"])
         self.assertIsNone(snapshot["cloning_diagnosis_detail"])

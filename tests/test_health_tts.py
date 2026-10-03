@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app import state
 import app.voice_turn as voice_turn
 from app.asr import ASRError
 from app.device_session import DeviceSession, DeviceState
@@ -69,11 +70,11 @@ class FakePlayer:
 
 class HealthTTSTests(unittest.TestCase):
     def setUp(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
         self.client = TestClient(main.app)
 
     def tearDown(self):
-        main.ACTIVE_SESSIONS.clear()
+        state.ACTIVE_SESSIONS.clear()
 
     def test_health_unloaded_model_reports_unknown_not_false(self):
         # Regression B3 / test #4: before any load, "unobserved" must be None
@@ -85,7 +86,7 @@ class HealthTTSTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
             response = self.client.get("/api/health")
 
@@ -109,7 +110,7 @@ class HealthTTSTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
             response = self.client.get("/api/health")
 
@@ -128,7 +129,7 @@ class HealthTTSTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
             response = self.client.get("/api/health")
 
@@ -152,7 +153,7 @@ class HealthTTSTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
         ):
             response = self.client.get("/api/health")
 
@@ -174,7 +175,7 @@ class HealthTTSTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", backend),
+            patch.object(state, "POCKET_TTS_BACKEND", backend),
         ):
             response = self.client.get("/api/health")
 

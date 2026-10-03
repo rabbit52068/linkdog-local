@@ -4,16 +4,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import app.main as main
+from app import state
+from app.routes import device
 from app.device_session import DeviceSession
 from app.dashboard_settings import SettingsStore
-from app.main import (
+from app.routes.device import (
     build_asr,
     build_chat_client,
     build_player,
     build_tts,
-    build_voice_action_executor,
-    build_voice_volume_executor,
     build_voice_input,
     disconnect_device,
     handle_device_event,
@@ -21,6 +20,7 @@ from app.main import (
 )
 from app.asr import FasterWhisperASR
 from app.chat_client import ChatClient
+from app.routes.control import build_voice_action_executor, build_voice_volume_executor
 from app.playback import OpusDownlinkPlayer
 from app.pocket_tts import PocketTTSBackend
 from app.tts import CommandTTSBackend
@@ -161,10 +161,10 @@ class VoiceWiringTests(unittest.TestCase):
         }
         with (
             patch.dict("os.environ", values, clear=True),
-            patch.object(main, "_POCKET_TTS_BACKEND", None),
+            patch.object(state, "POCKET_TTS_BACKEND", None),
         ):
-            first = main.build_tts()
-            second = main.build_tts()
+            first = device.build_tts()
+            second = device.build_tts()
 
         self.assertIsInstance(first, PocketTTSBackend)
         self.assertIs(first, second)
@@ -183,7 +183,7 @@ class VoiceWiringTests(unittest.TestCase):
 
     def test_voice_action_executor_binds_device_id(self):
         async def scenario():
-            with patch("app.main.execute_voice_action", new=AsyncMock(
+            with patch("app.routes.control.execute_voice_action", new=AsyncMock(
                 return_value="Okay, I sat down."
             )) as execute:
                 executor = build_voice_action_executor("TEST:DOG")
@@ -197,7 +197,7 @@ class VoiceWiringTests(unittest.TestCase):
     def test_voice_volume_executor_binds_device_id(self):
         async def scenario():
             arguments = {"mode": "up"}
-            with patch("app.main.execute_voice_volume", new=AsyncMock(
+            with patch("app.routes.control.execute_voice_volume", new=AsyncMock(
                 return_value="Volume set to 70 percent."
             )) as execute:
                 executor = build_voice_volume_executor("TEST:DOG")
@@ -221,7 +221,7 @@ class VoiceWiringTests(unittest.TestCase):
             empty_store = SettingsStore(Path(directory) / "settings.json")
             with (
                 patch.dict("os.environ", values, clear=True),
-                patch.object(main, "SETTINGS_STORE", empty_store),
+                patch.object(state, "SETTINGS_STORE", empty_store),
             ):
                 client = build_chat_client()
 
@@ -309,7 +309,7 @@ class VoiceWiringTests(unittest.TestCase):
 
 class ChatEnvTests(unittest.TestCase):
     def test_new_chat_names_win_and_legacy_names_still_work(self):
-        from app.main import _chat_env
+        from app.state import chat_env as _chat_env
 
         with patch.dict("os.environ", {"LINKDOG_HERMES_MODEL": "legacy"}, clear=True):
             self.assertEqual(_chat_env("MODEL", "default"), "legacy")

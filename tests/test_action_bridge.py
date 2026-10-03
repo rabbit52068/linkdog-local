@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import app.main as main
+from app import state
+from app.routes import control
 from app.device_session import DeviceSession
 from app.main import app
 
@@ -21,9 +22,9 @@ class FakeWebSocket:
 
 class ActionValidationTests(unittest.TestCase):
     def setUp(self):
-        main.ACTIVE_SESSIONS.clear()
-        main.PENDING_ACTIONS.clear()
-        main.ACTION_LOCKS.clear()
+        state.ACTIVE_SESSIONS.clear()
+        state.PENDING_ACTIONS.clear()
+        state.ACTION_LOCKS.clear()
         self.client = TestClient(app)
 
     def test_rejects_action_when_device_is_offline(self):
@@ -41,7 +42,7 @@ class ActionValidationTests(unittest.TestCase):
                 with self.assertRaises(WebSocketDisconnect) as ctx:
                     ws.receive_text()
             self.assertEqual(ctx.exception.code, 1003)
-            self.assertNotIn("BAD:HELLO", main.ACTIVE_SESSIONS)
+            self.assertNotIn("BAD:HELLO", state.ACTIVE_SESSIONS)
 
     def test_rejects_unknown_action(self):
         response = self.client.post("/xiaozhi/action", json={"action": "not_a_real_action"})
@@ -62,18 +63,18 @@ class ActionValidationTests(unittest.TestCase):
 
 class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        main.ACTIVE_SESSIONS.clear()
-        main.PENDING_ACTIONS.clear()
-        main.ACTION_LOCKS.clear()
+        state.ACTIVE_SESSIONS.clear()
+        state.PENDING_ACTIONS.clear()
+        state.ACTION_LOCKS.clear()
         self.ws = FakeWebSocket()
         self.session = DeviceSession("TEST:DOG", self.ws)
-        main.ACTIVE_SESSIONS["TEST:DOG"] = self.session
+        state.ACTIVE_SESSIONS["TEST:DOG"] = self.session
 
     async def asyncTearDown(self):
         await self.session.close()
 
     async def _start_action(self, action="sit_down"):
-        task = asyncio.create_task(main.send_action(main.ActionRequest(
+        task = asyncio.create_task(control.send_action(control.ActionRequest(
             device_id="TEST:DOG",
             action=action,
         )))
@@ -111,7 +112,7 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        resolved = main.resolve_mcp_response(
+        resolved = control.resolve_mcp_response(
             "TEST:DOG", self._success_payload(request_id)
         )
         self.assertTrue(resolved)
@@ -121,7 +122,7 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_returns_gateway_error_for_mcp_failure(self):
         task, message = await self._start_action()
         request_id = message["payload"]["id"]
-        main.resolve_mcp_response("TEST:DOG", {
+        control.resolve_mcp_response("TEST:DOG", {
             "jsonrpc": "2.0",
             "id": request_id,
             "result": {
@@ -134,9 +135,9 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.status_code, 502)
 
     async def test_times_out_without_mcp_response(self):
-        with patch.object(main, "ACTION_TIMEOUT_SECONDS", 0.01):
+        with patch.object(state, "ACTION_TIMEOUT_SECONDS", 0.01):
             with self.assertRaises(HTTPException) as caught:
-                await main.send_action(main.ActionRequest(
+                await control.send_action(control.ActionRequest(
                     device_id="TEST:DOG",
                     action="sit_down",
                 ))
@@ -145,14 +146,14 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_second_action_while_first_is_running(self):
         first_task, first_message = await self._start_action()
         with self.assertRaises(HTTPException) as caught:
-            await main.send_action(main.ActionRequest(
+            await control.send_action(control.ActionRequest(
                 device_id="TEST:DOG",
                 action="stand_up",
             ))
         self.assertEqual(caught.exception.status_code, 409)
 
         request_id = first_message["payload"]["id"]
-        main.resolve_mcp_response(
+        control.resolve_mcp_response(
             "TEST:DOG", self._success_payload(request_id)
         )
         result = await first_task
@@ -164,8 +165,8 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
             "device_id": "TEST:DOG",
             "action": "sit_down",
         }
-        with patch.object(main, "send_action", AsyncMock(return_value=completed)) as send:
-            response = await main.execute_voice_action("TEST:DOG", "sit_down")
+        with patch.object(control, "send_action", AsyncMock(return_value=completed)) as send:
+            response = await control.execute_voice_action("TEST:DOG", "sit_down")
 
         request = send.await_args.args[0]
         self.assertEqual(request.device_id, "TEST:DOG")
@@ -185,11 +186,11 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
             "action": "set_volume",
         }
         with patch.object(
-            main,
+            control,
             "send_action",
             AsyncMock(side_effect=[status, completed]),
         ) as send:
-            response = await main.execute_voice_volume(
+            response = await control.execute_voice_volume(
                 "TEST:DOG", {"mode": "up"}
             )
 
@@ -200,8 +201,8 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response, "Volume set to 70 percent.")
 
     async def test_set_volume_uses_official_mcp_without_motion_state_gate(self):
-        with patch.object(main, "ensure_listening_state", new=AsyncMock()) as gate:
-            task = asyncio.create_task(main.send_action(main.ActionRequest(
+        with patch.object(control, "ensure_listening_state", new=AsyncMock()) as gate:
+            task = asyncio.create_task(control.send_action(control.ActionRequest(
                 device_id="TEST:DOG",
                 action="set_volume",
                 volume=65,
@@ -217,7 +218,7 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
             gate.assert_not_awaited()
 
             request_id = message["payload"]["id"]
-            main.resolve_mcp_response(
+            control.resolve_mcp_response(
                 "TEST:DOG", self._success_payload(request_id)
             )
             result = await task
