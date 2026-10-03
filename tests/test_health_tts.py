@@ -87,7 +87,7 @@ class HealthTTSTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", None),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -111,7 +111,7 @@ class HealthTTSTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", None),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         data = response.json()["tts"]
         self.assertEqual(data["backend"], "pocket")
@@ -130,7 +130,7 @@ class HealthTTSTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", None),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         data = response.json()["tts"]
         self.assertEqual(data["voice"], "cosette")
@@ -154,7 +154,7 @@ class HealthTTSTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", backend),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         tts = response.json()["tts"]
         self.assertEqual(tts["model_status"], "failed")
@@ -176,7 +176,7 @@ class HealthTTSTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", backend),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         tts = response.json()["tts"]
         self.assertEqual(tts["model_status"], "ready")
@@ -185,7 +185,7 @@ class HealthTTSTests(unittest.TestCase):
 
     def test_health_command_backend_reports_configured_ok(self):
         with patch.dict("os.environ", {"LINKDOG_TTS_BACKEND": ""}, clear=True):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         tts = response.json()["tts"]
         self.assertEqual(tts["backend"], "command")

@@ -75,6 +75,28 @@ class LinkDogClientTests(unittest.TestCase):
         self.assertTrue(result["connected"])
         self.assertEqual(result["device_id"], "TEST:DOG")
 
+    def test_sends_bearer_token_when_configured(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request.headers.get("authorization"))
+            return httpx.Response(200, json={"status": "completed"})
+
+        LinkDogClient(
+            adapter_url="http://adapter.test",
+            device_id="TEST:DOG",
+            transport=httpx.MockTransport(handler),
+            api_token="s3cret",
+        ).execute("sit_down")
+        LinkDogClient(
+            adapter_url="http://adapter.test",
+            device_id="TEST:DOG",
+            transport=httpx.MockTransport(handler),
+            api_token="",
+        ).execute("sit_down")
+
+        self.assertEqual(seen, ["Bearer s3cret", None])
+
 
 if __name__ == "__main__":
     unittest.main()

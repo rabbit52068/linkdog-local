@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, Optional
 
 import httpx
@@ -16,17 +17,25 @@ class LinkDogClient:
         device_id: str,
         timeout: float = 12.0,
         transport: Optional[httpx.BaseTransport] = None,
+        api_token: Optional[str] = None,
     ):
         self.adapter_url = adapter_url.rstrip("/")
         self.device_id = device_id
         self.timeout = timeout
         self.transport = transport
+        if api_token is None:
+            api_token = os.environ.get("LINKDOG_API_TOKEN", "")
+        self.api_token = api_token.strip()
 
     def _client(self) -> httpx.Client:
+        headers = (
+            {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
+        )
         return httpx.Client(
             base_url=self.adapter_url,
             timeout=self.timeout,
             transport=self.transport,
+            headers=headers,
         )
 
     @staticmethod

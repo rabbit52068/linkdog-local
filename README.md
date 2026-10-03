@@ -91,6 +91,14 @@ The stock firmware hard-codes the adapter host as a LAN IP. To use this adapter 
 - **LLM**: non-secret fields (model, provider, API URL) live in `data/settings.json`; the API key stays in `.env`.
 - **Multiple dogs**: the adapter supports several dogs, keyed by MAC address.
 
+## Security
+
+The adapter listens on all interfaces so the dog can reach it.
+
+- **Open to the LAN** (the firmware cannot send credentials): the device WebSocket (`/xiaozhi/ws`), OTA and music routes, the dashboard page itself, and `/health` (liveness only).
+- **Token-protected**: everything that can move the dog, read or change settings, or expose diagnostics (`/xiaozhi/action`, `/api/*`). Set `LINKDOG_API_TOKEN` in `.env`. The dashboard asks for it once and remembers it in the browser. Callers on `localhost`, such as the MCP bridge, never need it. With no token set, these APIs are reachable from `localhost` only.
+- **Known limitation**: a LAN host that spoofs the dog's `device-id` header can open a WebSocket session and take over the dog's slot. Run the adapter on a network you trust.
+
 ## License
 
 MIT. The upstream LinkDog firmware source is also MIT.

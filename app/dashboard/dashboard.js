@@ -17,6 +17,32 @@ const fields = {
   volume: document.querySelector('#volume'),
 };
 
+const TOKEN_KEY = 'linkdog-api-token';
+
+function storedToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+}
+
+function storeToken(token) {
+  try { localStorage.setItem(TOKEN_KEY, token); } catch { /* private mode */ }
+}
+
+// Adds the adapter API token; on 401 asks for it once and retries.
+async function apiFetch(url, options = {}, retried = false) {
+  const headers = { ...(options.headers || {}) };
+  const token = storedToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401 && !retried) {
+    const entered = window.prompt('Enter the LinkDog API token (LINKDOG_API_TOKEN in .env):');
+    if (entered && entered.trim()) {
+      storeToken(entered.trim());
+      return apiFetch(url, options, true);
+    }
+  }
+  return response;
+}
+
 function setStatus(text, type = '') {
   statusText.textContent = text;
   statusText.className = type;
@@ -118,7 +144,7 @@ function setConnection(devices, details = []) {
 
 async function loadModels(savedModel) {
   try {
-    const response = await fetch('/api/models');
+    const response = await apiFetch('/api/models');
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     availableModels = data.models || [];
@@ -135,7 +161,7 @@ async function loadModels(savedModel) {
 
 async function load() {
   try {
-    const response = await fetch('/api/settings');
+    const response = await apiFetch('/api/settings');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     fill(data.settings);
@@ -177,7 +203,7 @@ form.addEventListener('submit', async event => {
   saveButton.disabled = true;
   setStatus('Saving…');
   try {
-    const response = await fetch('/api/settings', {
+    const response = await apiFetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload()),

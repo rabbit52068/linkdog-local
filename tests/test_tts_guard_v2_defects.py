@@ -457,7 +457,7 @@ class HealthRedactionTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", backend),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         body = response.text
         self.assertEqual(response.status_code, 200)
@@ -486,7 +486,7 @@ class HealthRedactionTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", backend),
         ):
-            response = self.client.get("/health")
+            response = self.client.get("/api/health")
 
         body = response.text
         self.assertEqual(response.status_code, 200)
@@ -784,7 +784,7 @@ class CatalogFailedLoadTests(unittest.TestCase):
             patch.dict("os.environ", values, clear=True),
             patch.object(main, "_POCKET_TTS_BACKEND", backend),
         ):
-            return self.client.get("/health").json()["tts"]
+            return self.client.get("/api/health").json()["tts"]
 
     def test_catalog_voice_with_failed_load_is_not_configured_ok(self):
         # Pre-fix: configured_ok == True while model_status == 'failed'.

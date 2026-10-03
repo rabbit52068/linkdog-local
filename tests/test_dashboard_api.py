@@ -74,7 +74,7 @@ class DashboardApiTests(unittest.TestCase):
         response = self.client.get("/dashboard/assets/dashboard.js")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("fetch('/api/models')", response.text)
+        self.assertIn("apiFetch('/api/models')", response.text)
         self.assertIn("(unavailable)", response.text)
         self.assertIn("Model discovery failed", response.text)
 

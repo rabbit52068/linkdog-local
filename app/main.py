@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.actions import ACTION_SPECS, build_arguments, result_type, tool_name
 from app.asr import FasterWhisperASR
 from app.audio_codec import OpusCodec
+from app.auth import require_token
 from app.dashboard_settings import DEFAULT_MODEL, DashboardSettings, SettingsStore
 from app.device_session import DeviceSession, SessionClosedError
 from app.hermes_client import DEFAULT_SYSTEM_PROMPT, HermesAPIClient
@@ -362,7 +363,7 @@ async def ensure_listening_state(session: DeviceSession, device_id: str) -> None
     print(f"[STATE] {device_id} set to Listening before action")
 
 
-@app.post("/xiaozhi/action")
+@app.post("/xiaozhi/action", dependencies=[Depends(require_token)])
 async def send_action(request: ActionRequest):
     mcp_tool = ALLOWED_ACTIONS.get(request.action)
     if mcp_tool is None:
@@ -562,7 +563,7 @@ async def dashboard():
     return FileResponse(DASHBOARD_DIR / "index.html", media_type="text/html")
 
 
-@app.get("/api/models")
+@app.get("/api/models", dependencies=[Depends(require_token)])
 async def get_models():
     try:
         result = await MODEL_CATALOG.get_models()
@@ -574,7 +575,7 @@ async def get_models():
     }
 
 
-@app.get("/api/settings")
+@app.get("/api/settings", dependencies=[Depends(require_token)])
 async def get_settings():
     try:
         settings = load_dashboard_settings()
@@ -593,7 +594,7 @@ async def get_settings():
     }
 
 
-@app.put("/api/settings")
+@app.put("/api/settings", dependencies=[Depends(require_token)])
 async def update_settings(request: DashboardSettingsRequest):
     try:
         settings = DashboardSettings.from_dict(request.model_dump())
@@ -645,6 +646,15 @@ async def update_settings(request: DashboardSettingsRequest):
 
 @app.get("/health")
 async def health():
+    """Public liveness probe; diagnostics live behind /api/health."""
+    return {
+        "status": "ok",
+        "connected_devices": sorted(ACTIVE_SESSIONS),
+    }
+
+
+@app.get("/api/health", dependencies=[Depends(require_token)])
+async def api_health():
     return {
         "status": "ok",
         "connected_devices": sorted(ACTIVE_SESSIONS),
