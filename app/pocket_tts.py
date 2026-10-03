@@ -54,14 +54,11 @@ class PocketTTSBackend:
         # degradation. Holds an outcome string (e.g. 'no_token'), never a secret.
         self.cloning_diagnosis: Optional[str] = None
         self.cloning_diagnosis_detail: Optional[str] = None
-        # R6 (Astra round 2): WHERE that credential came from. Without this the
-        # provenance died here — main.py could only see (outcome, detail), so a
-        # cache-sourced token reporting 'ok' looked identical to a durable one.
+        # Where that credential came from, so a cache-sourced token reporting
+        # 'ok' is distinguishable from a durable one.
         self.cloning_credential_source: Optional[str] = None
-        # And whether that source survives a cache clear. Source alone is not
-        # enough: 'hub_cache' already implies it, but a future source must not
-        # be able to report healthy without stating its durability. ``None``
-        # means "not observed yet" — never "fine".
+        # Whether that source survives a cache clear. ``None`` means "not
+        # observed yet" — never "fine".
         self.cloning_credential_durable: Optional[bool] = None
 
     async def synthesize(self, text: str) -> bytes:
@@ -83,8 +80,8 @@ class PocketTTSBackend:
                 state = model.get_state_for_audio_prompt(self.voice)
             except Exception as exc:  # noqa: BLE001 - surface via load_status/last_error
                 self.load_status = "failed"
-                # Redacted: this string is published verbatim by the
-                # unauthenticated /health endpoint and the dashboard, and Hub
+                # Redacted: this string is published verbatim by
+                # /api/health and the dashboard, and Hub
                 # errors embed the request URL (which can carry ?token=...).
                 self.last_error = redact_secrets(str(exc))
 
@@ -112,8 +109,8 @@ class PocketTTSBackend:
         Never raises: a diagnostic that breaks the failure path is worse than
         no diagnostic at all. Returns ``(None, None)`` when inconclusive.
 
-        Side effect (R6): stores the credential *source* on the instance, so
-        provenance reaches ``/health`` instead of being dropped here.
+        Side effect: stores the credential source and durability on the
+        instance so they reach ``/api/health``.
         """
         try:
             diagnosis = self._auth_probe()

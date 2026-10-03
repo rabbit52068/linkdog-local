@@ -36,10 +36,8 @@ async def api_health():
 def _credential_provenance_snapshot() -> Optional[Dict[str, Any]]:
     """Report where the Hub credential actually comes from, secret-free.
 
-    R6 (Astra round 2): the durability fix is only observable if provenance
-    reaches an operator. It used to die inside ``pocket_tts``, which kept just
-    ``(outcome, detail)`` — so ``configured_ok: true`` could coexist with
-    "the credential is one cache clear from vanishing" and nothing said so.
+    Without this, ``configured_ok: true`` could coexist with "the credential
+    is one cache clear from vanishing" and nothing would say so.
 
     Never raises: a broken probe must not take down /health.
     """
@@ -73,11 +71,9 @@ def credential_source_from_backend(backend_obj: Any) -> Optional[str]:
 def credential_durable_from_backend(backend_obj: Any) -> Optional[bool]:
     """The credential durability the TTS backend actually observed, if any.
 
-    Companion to :func:`credential_source_from_backend`. Round-2 review (R6)
-    showed that a source alone is not enough: ``outcome='ok'`` with
-    ``source='hub_cache'`` means the credential works today and is one cache
-    clear from failing, so the durability verdict has to travel alongside it or
-    the operator sees a healthy-looking row that is not durable.
+    Companion to :func:`credential_source_from_backend`: a source alone can
+    read as healthy while being one cache clear from failing, so the
+    durability verdict travels alongside it.
 
     ``None`` when nothing has been probed yet (no failed load), so this never
     fabricates a verdict.
@@ -95,7 +91,7 @@ def _tts_health_snapshot() -> Dict[str, Any]:
     model/state (if any) and never call ``load_model`` here, so /health stays
     fast and cannot be turned into an accidental model-loading endpoint.
 
-    Three-stage semantics (Astra blocking #3):
+    Three-stage semantics:
       - Nothing observed yet -> ``voice_cloning_available=None``,
         ``configured_ok=None``, ``model_status='unknown'`` (never ``false``).
       - ``ready`` requires BOTH model and state to be present; a model that
@@ -104,7 +100,7 @@ def _tts_health_snapshot() -> Dict[str, Any]:
         but a ``failed`` load is checked FIRST so a broken model can never be
         masked by the catalog branch.
       - ``last_error`` is passed through :func:`app.redact.redact_secrets` on
-        the way out; this endpoint is unauthenticated and dashboard-rendered.
+        the way out; this payload is rendered in browsers and copied into logs.
     """
     backend = resolve_backend()
     if backend == "pocket":
@@ -165,12 +161,8 @@ def _tts_health_snapshot() -> Dict[str, Any]:
 
         return {
             "backend": "pocket",
-            # R3 (Astra round 2): the voice string reaches /health verbatim. It is
-            # operator-supplied and may be a full URL carrying a credential in the
-            # query string (LINKDOG_POCKET_VOICE=https://host/voice.wav?token=...),
-            # and /health is unauthenticated. Redact on the way out — this leak
-            # needs no exception and would survive any fix confined to
-            # pocket_tts/last_error.
+            # The voice is operator-supplied and may be a URL with a credential
+            # in its query string (…/voice.wav?token=...). Redact on the way out.
             "voice": redact_secrets(voice),
             "voice_kind": voice_kind,
             "voice_cloning_required": cloning_required,
@@ -188,18 +180,14 @@ def _tts_health_snapshot() -> Dict[str, Any]:
                 if cloning_diagnosis_detail
                 else None
             ),
-            # R6 (Astra round 2): where the credential ACTUALLY comes from, end to
-            # end. The backend used to keep only (outcome, detail), so provenance
-            # died inside pocket_tts and "ok" could still mean "one cache clear
-            # from failing". Both values are secret-free by construction.
+            # Live view: where the credential comes from right now.
             "credential": _credential_provenance_snapshot(),
+            # Observed view: what the backend saw when a load failed (None
+            # until then). Source and durability travel together.
             "credential_source": credential_source_from_backend(backend_obj),
-            # R6: durability must travel with the source. A working-but-cache-
-            # sourced credential reports outcome='ok'; without this the row
-            # reads healthy while it is one cache clear from failing.
             "credential_durable": credential_durable_from_backend(backend_obj),
             # Defence in depth: the backend already redacts at the source, but
-            # /health is unauthenticated and dashboard-rendered, so mask again
+            # this payload reaches browsers and logs, so mask again
             # on the way out rather than trusting every future writer.
             "last_error": redact_secrets(last_error) if last_error else None,
             "tts_failures": tts_failure_total(),

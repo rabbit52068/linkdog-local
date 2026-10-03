@@ -31,8 +31,8 @@ Pointing ``HF_TOKEN_PATH`` at a file outside the cache directory decouples
 credential lifetime from cache lifetime, so clearing the cache no longer
 destroys the credential.
 
-Why provenance is reported, not just success (second review, 2026-09-14)
------------------------------------------------------------------------
+Why provenance is reported, not just success
+--------------------------------------------
 Pinning the path is not enough on its own. If the project file goes missing
 while a token still sits in the Hub cache, the Hub silently falls back to the
 cache credential: the download works, ``diagnose_gated_access`` reports ``ok``,
@@ -301,9 +301,8 @@ def credential_provenance(env: dict | None = None) -> CredentialProvenance:
     therefore reported as ``degraded`` even though it currently works — that is
     exactly the masking failure this check exists to surface.
 
-    Round-2 review (2026-09-14) replaced the original *path-string comparison*
-    with an actual resolution probe. Path comparison produced three false
-    positives, all reproduced against the real Hub:
+    An actual resolution probe replaced an earlier *path-string comparison*,
+    which produced three false positives, all reproduced against the real Hub:
 
       1. Project file deleted, ``constants.HF_TOKEN_PATH`` still frozen at the
          project path -> reported ``project``/``durable`` while ``get_token()``

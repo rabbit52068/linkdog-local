@@ -21,8 +21,8 @@ All backend/voice parsing is delegated to :mod:`app.tts_config`, the single
 source of truth shared with the runtime — so a voice that passes here is the
 exact string the runtime will hand to ``get_state_for_audio_prompt``.
 
-Two *independent* results (second review, 2026-09-14)
-----------------------------------------------------
+Two *independent* results
+-------------------------
 ``readiness`` (the exit code: can TTS actually run?) and ``credential
 durability`` (would it still run after a cache clear?) are reported separately,
 because a ready preflight is frequently cache-backed — the weights are already

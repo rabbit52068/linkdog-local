@@ -87,10 +87,9 @@ class GatedAccessDiagnosis:
     # cache-sourced token that works is still ``ok``, but reporting the source
     # keeps a masked durability regression visible.
     token_source: str = ""
-    # Whether that source survives a cache clear. R6 (Astra round 2): reporting
-    # the source alone was not enough — a consumer would have to know which
-    # source names imply fragility. ``None`` means "not determined", which must
-    # never be rendered as healthy.
+    # Whether that source survives a cache clear, so consumers need not know
+    # which source names are fragile. ``None`` means "not determined", which
+    # must never be rendered as healthy.
     durable: Optional[bool] = None
 
     @property
@@ -218,9 +217,7 @@ def diagnose_gated_access(
 
             _provenance = credential_provenance()
             token_source = _provenance.source
-            # R6: durability must travel WITH the source. Reporting only the
-            # source pushed the "which source names are fragile" knowledge onto
-            # every consumer, which is how it got lost in the first place.
+            # Durability travels with the source; see ``durable`` above.
             provenance_durable = _provenance.durable
         except Exception:  # noqa: BLE001 - provenance is explanatory only
             token_source = None

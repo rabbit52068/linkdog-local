@@ -22,7 +22,7 @@ export PYTHONUNBUFFERED=1
 # unavailable, or a .safetensors state that cannot be imported. The backend
 # skip decision lives entirely in Python (scripts/tts_preflight.py) so the
 # shell never parses LINKDOG_TTS_BACKEND and cannot be bypassed via
-# whitespace/case tricks (Astra blocking #1/#4).
+# whitespace/case tricks.
 if ! .venv-dev/bin/python scripts/tts_preflight.py; then
     echo "[run_adapter] TTS preflight failed; refusing to start." >&2
     exit 1

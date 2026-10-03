@@ -2,8 +2,8 @@
 
 A TTS load failure surfaces the underlying exception message, and HF/Hub
 errors routinely embed the *request URL* — which can carry a ``?token=...``
-query parameter. That text is published by ``/health`` (unauthenticated) and
-shown on the dashboard, so a credential could end up in a browser, a log
+query parameter. That text is published by ``/api/health`` and shown on the
+dashboard, so a credential could end up in a browser, a log
 aggregator, or a screenshot.
 
 The rule applied here is deliberately blunt: it is better to over-mask a
@@ -11,13 +11,11 @@ diagnostic string than to leak a credential. Only the secret *values* are
 replaced; the surrounding message stays readable so operators can still tell
 what failed.
 
-Architecture (rewritten 2026-09-14, second review; hardened 2026-09-14,
-third review)
------------------------------------------------------------------------------
-The first fix for a real leak (``Authorization: Bearer ...``) added
-``bearer|token|basic`` to the scheme group of the keyed rule. Round-2 review
-showed that was a per-scheme patch, not a fix: six of eight credential shapes
-still leaked. The failures shared two structural causes:
+Architecture
+------------
+An earlier per-scheme patch (adding ``bearer|token|basic`` to the keyed rule)
+still leaked six of eight credential shapes. The failures shared two
+structural causes:
 
 1. **The key rule assumed bare ``key=value``.** A JSON-quoted key
    (``{"Authorization": "Basic ..."}``) has a quote between the key and the
