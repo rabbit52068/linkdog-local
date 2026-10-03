@@ -1,5 +1,6 @@
 """Firmware OTA manifests and binaries, plus the device bootstrap call."""
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -8,6 +9,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from app import state
 
 FIRMWARE_DIR = Path(__file__).resolve().parent.parent.parent / "firmware"
+
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -61,7 +64,7 @@ async def ota_bootstrap(request: Request):
     # Device POSTs device JSON; body content is not parsed at this stage, only the device id is logged
     body = await request.body()
     device_id = request.headers.get("device-id", "unknown")
-    print(f"[OTA] bootstrap from {device_id}, body={len(body)} bytes")
+    LOGGER.info(f"[OTA] bootstrap from {device_id}, body={len(body)} bytes")
 
     # Critical: return only the websocket section, never mqtt (otherwise the device uses MQTT)
     return JSONResponse({

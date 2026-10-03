@@ -255,7 +255,7 @@ class VoiceTurnWorker:
             text = await self.asr.transcribe(utterance, sample_rate=16_000)
         except ASRTimeoutError as error:
             self.asr_timeouts += 1
-            print(
+            LOGGER.info(
                 f"[VOICE-ASR] device={self.session.device_id} "
                 f"status=timeout error={str(error)!r}"
             )
@@ -263,7 +263,7 @@ class VoiceTurnWorker:
             return
         except ASRError as error:
             self.asr_failures += 1
-            print(
+            LOGGER.info(
                 f"[VOICE-ASR] device={self.session.device_id} "
                 f"status=error error={str(error)!r}"
             )
@@ -275,13 +275,13 @@ class VoiceTurnWorker:
         text = text.strip()
         if not text:
             self.blank_transcripts += 1
-            print(
+            LOGGER.info(
                 f"[VOICE-ASR] device={self.session.device_id} status=blank"
             )
             await self._recover_if_current(generation)
             return
 
-        print(
+        LOGGER.info(
             f"[VOICE-ASR] device={self.session.device_id} "
             f"status=ok transcript={text!r}"
         )
@@ -573,7 +573,7 @@ class VoiceTurnWorker:
             await self._recover_listening()
 
     async def _recover_listening(self) -> None:
-        print(
+        LOGGER.info(
             f"[VOICE-STATE] device={self.session.device_id} "
             "tts=stop reason=recover"
         )

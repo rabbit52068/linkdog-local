@@ -10,10 +10,13 @@ with a small pre-buffer to cut time-to-first-audio.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from app.device_session import DeviceSession, DeviceState
 from app.tts import map_emotion, pcm_frames
+
+LOGGER = logging.getLogger(__name__)
 
 
 SUPPORTED_EMOTIONS = {
@@ -105,7 +108,7 @@ class OpusDownlinkPlayer:
             if not turn_already_started:
                 await self.session.send_json({"type": "tts", "state": "start"})
             else:
-                print(
+                LOGGER.info(
                     f"[VOICE-STATE] device={self.session.device_id} "
                     "tts=start reused reason=endpoint"
                 )

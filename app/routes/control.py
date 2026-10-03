@@ -1,6 +1,7 @@
 """Action bridge: HTTP and voice requests to firmware MCP tool calls."""
 
 import asyncio
+import logging
 import json
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -12,6 +13,8 @@ from app.actions import ACTION_SPECS, build_arguments, result_type, tool_name
 from app.auth import require_token
 from app.device_session import DeviceSession, SessionClosedError
 from app.voice_turn import VoiceActionError
+
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -128,7 +131,7 @@ async def ensure_listening_state(session: DeviceSession, device_id: str) -> None
     await session.send_json({"type": "tts", "state": "stop"})
     # After tts:stop the device waits WaitForPlayCompletion(1000) before switching to Listening; leave extra buffer.
     await asyncio.sleep(2.5)
-    print(f"[STATE] {device_id} set to Listening before action")
+    LOGGER.info(f"[STATE] {device_id} set to Listening before action")
 
 
 @router.post("/xiaozhi/action", dependencies=[Depends(require_token)])
@@ -194,7 +197,7 @@ async def send_action(request: ActionRequest):
         state.PENDING_ACTIONS[request_id] = (device_id, response_future)
         try:
             await session.send_json(message)
-            print(f"[ACTION] sent {request.action} to {device_id}, request_id={request_id}")
+            LOGGER.info(f"[ACTION] sent {request.action} to {device_id}, request_id={request_id}")
             payload = await asyncio.wait_for(
                 asyncio.shield(response_future),
                 timeout=state.ACTION_TIMEOUT_SECONDS,
@@ -231,7 +234,7 @@ async def send_action(request: ActionRequest):
             # text type: return the string content
             response_text = text_value
 
-        print(f"[ACTION] completed {request.action} on {device_id}, request_id={request_id}")
+        LOGGER.info(f"[ACTION] completed {request.action} on {device_id}, request_id={request_id}")
         return {
             "status": "completed",
             "device_id": device_id,
@@ -299,7 +302,7 @@ async def apply_saved_volume(device_id: str) -> None:
             {"mode": "set", "volume": settings.volume},
         )
     except HTTPException as exc:
-        print(
+        LOGGER.info(
             f"[DASHBOARD] volume apply failed for {device_id}: {exc.detail}"
         )
 

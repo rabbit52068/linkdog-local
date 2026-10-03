@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Awaitable, Callable, Optional
 
 from app.audio_codec import OpusCodecError
 from app.device_session import DeviceSession, DeviceState
+
+LOGGER = logging.getLogger(__name__)
 
 
 class VoiceInputPipeline:
@@ -41,7 +44,7 @@ class VoiceInputPipeline:
 
     def start_listening(self) -> bool:
         if self.session.state in (DeviceState.THINKING, DeviceState.SPEAKING):
-            print(
+            LOGGER.info(
                 f"[VOICE-STATE] device={self.session.device_id} "
                 f"listen=start ignored turn_state={self.session.state.value}"
             )
@@ -78,14 +81,14 @@ class VoiceInputPipeline:
                     if utterance is None:
                         continue
 
-                    print(
+                    LOGGER.info(
                         f"[VOICE-ENDPOINT] device={self.session.device_id} "
                         f"pcm_bytes={len(utterance)}"
                     )
                     self._stop_idle_timer()
                     self._listening = False
                     self.session.state = DeviceState.THINKING
-                    print(
+                    LOGGER.info(
                         f"[VOICE-STATE] device={self.session.device_id} "
                         "tts=start reason=endpoint"
                     )

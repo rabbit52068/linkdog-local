@@ -1,7 +1,6 @@
 import asyncio
 import json
 import unittest
-from unittest.mock import patch
 
 from app.device_session import DeviceSession, DeviceState
 from app.voice_input import VoiceInputPipeline
@@ -152,7 +151,7 @@ class VoiceInputPipelineTests(unittest.IsolatedAsyncioTestCase):
         await session.close()
 
     async def test_endpoint_stops_uplink_and_emits_utterance(self):
-        with patch("builtins.print") as mock_print:
+        with self.assertLogs("app", level="INFO") as logs:
             self.pipeline.start_listening()
             # 喚醒詞丟棄窗口（13 幀）會先吞掉前 13 幀，餵滿後才開始處理
             for _ in range(13):
@@ -163,11 +162,13 @@ class VoiceInputPipelineTests(unittest.IsolatedAsyncioTestCase):
             utterance = await asyncio.wait_for(self.pipeline.next_utterance(), timeout=0.2)
 
         self.assertEqual(utterance, b"complete utterance")
-        mock_print.assert_any_call(
-            "[VOICE-ENDPOINT] device=TEST:DOG pcm_bytes=18"
+        self.assertIn(
+            "[VOICE-ENDPOINT] device=TEST:DOG pcm_bytes=18",
+            [record.getMessage() for record in logs.records],
         )
-        mock_print.assert_any_call(
-            "[VOICE-STATE] device=TEST:DOG tts=start reason=endpoint"
+        self.assertIn(
+            "[VOICE-STATE] device=TEST:DOG tts=start reason=endpoint",
+            [record.getMessage() for record in logs.records],
         )
         self.assertEqual(self.session.state, DeviceState.THINKING)
         self.assertEqual(

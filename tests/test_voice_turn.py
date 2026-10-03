@@ -1,7 +1,7 @@
 import asyncio
 import json
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from app.asr import ASRError, ASRTimeoutError
 from app.device_session import DeviceSession, DeviceState
@@ -287,14 +287,15 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_transcribes_utterance_sends_stt_and_emits_transcript(self):
         asr = FakeASR(result="你好 小智")
         worker = await self.start_worker(asr)
-        with patch("builtins.print") as mock_print:
+        with self.assertLogs("app", level="INFO") as logs:
             await self.voice_input.utterances.put(b"pcm")
 
             transcript = await asyncio.wait_for(worker.next_transcript(), timeout=0.2)
 
         self.assertEqual(transcript, "你好 小智")
-        mock_print.assert_any_call(
-            "[VOICE-ASR] device=TEST:DOG status=ok transcript='你好 小智'"
+        self.assertIn(
+            "[VOICE-ASR] device=TEST:DOG status=ok transcript='你好 小智'",
+            [record.getMessage() for record in logs.records],
         )
         self.assertEqual(asr.calls, [(b"pcm", 16_000)])
         self.assertEqual(
@@ -686,16 +687,18 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_blank_transcript_recovers_listening_state(self):
         worker = await self.start_worker(FakeASR(result="   "))
-        with patch("builtins.print") as mock_print:
+        with self.assertLogs("app", level="INFO") as logs:
             await self.voice_input.utterances.put(b"pcm")
 
             await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)
 
-        mock_print.assert_any_call(
-            "[VOICE-ASR] device=TEST:DOG status=blank"
+        self.assertIn(
+            "[VOICE-ASR] device=TEST:DOG status=blank",
+            [record.getMessage() for record in logs.records],
         )
-        mock_print.assert_any_call(
-            "[VOICE-STATE] device=TEST:DOG tts=stop reason=recover"
+        self.assertIn(
+            "[VOICE-STATE] device=TEST:DOG tts=stop reason=recover",
+            [record.getMessage() for record in logs.records],
         )
         self.assertEqual(
             self.websocket.messages,
@@ -706,13 +709,14 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_asr_error_recovers_without_emitting_transcript(self):
         worker = await self.start_worker(FakeASR(error=ASRError("broken")))
-        with patch("builtins.print") as mock_print:
+        with self.assertLogs("app", level="INFO") as logs:
             await self.voice_input.utterances.put(b"pcm")
 
             await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)
 
-        mock_print.assert_any_call(
-            "[VOICE-ASR] device=TEST:DOG status=error error='broken'"
+        self.assertIn(
+            "[VOICE-ASR] device=TEST:DOG status=error error='broken'",
+            [record.getMessage() for record in logs.records],
         )
         self.assertEqual(worker.asr_failures, 1)
         self.assertEqual(
@@ -723,13 +727,14 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_is_counted_separately(self):
         worker = await self.start_worker(FakeASR(error=ASRTimeoutError("slow")))
-        with patch("builtins.print") as mock_print:
+        with self.assertLogs("app", level="INFO") as logs:
             await self.voice_input.utterances.put(b"pcm")
 
             await asyncio.wait_for(worker.wait_until_idle(), timeout=0.2)
 
-        mock_print.assert_any_call(
-            "[VOICE-ASR] device=TEST:DOG status=timeout error='slow'"
+        self.assertIn(
+            "[VOICE-ASR] device=TEST:DOG status=timeout error='slow'",
+            [record.getMessage() for record in logs.records],
         )
         self.assertEqual(worker.asr_timeouts, 1)
         self.assertEqual(worker.asr_failures, 0)

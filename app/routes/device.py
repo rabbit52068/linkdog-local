@@ -1,6 +1,7 @@
 """Device WebSocket session and the per-connection voice pipeline wiring."""
 
 import asyncio
+import logging
 import json
 import os
 import sys
@@ -29,6 +30,8 @@ from app.tts_config import resolve_backend, resolve_voice
 from app.vad import UtteranceEndpoint, WebRtcVadClassifier
 from app.voice_input import VoiceInputPipeline
 from app.voice_turn import VoiceTurnWorker
+
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -182,11 +185,11 @@ async def ws_endpoint(ws: WebSocket):
     except json.JSONDecodeError:
         hello = None
     if not isinstance(hello, dict):
-        print("[WS] rejected connection: first message is not a JSON object")
+        LOGGER.info("[WS] rejected connection: first message is not a JSON object")
         await ws.close(code=1003)
         return
     device_id = ws.headers.get("device-id", "unknown")
-    print(f"[WS] hello from {device_id}: type={hello.get('type')}, "
+    LOGGER.info(f"[WS] hello from {device_id}: type={hello.get('type')}, "
           f"audio={hello.get('audio_params')}")
 
     # Send server hello (transport must be websocket, otherwise the device rejects it)
@@ -201,7 +204,7 @@ async def ws_endpoint(ws: WebSocket):
             "frame_duration": 60,
         },
     }))
-    print(f"[WS] server hello sent, session={device_id}")
+    LOGGER.info(f"[WS] server hello sent, session={device_id}")
     previous_session = state.ACTIVE_SESSIONS.get(device_id)
     if previous_session is not None:
         await previous_session.close()
@@ -248,7 +251,7 @@ async def ws_endpoint(ws: WebSocket):
             if msg.get("type") == "websocket.receive":
                 text = msg.get("text")
                 if text:
-                    print(f"[WS] text: {text[:500]}")
+                    LOGGER.info(f"[WS] text: {text[:500]}")
                     try:
                         event = json.loads(text)
                     except json.JSONDecodeError:
@@ -267,7 +270,7 @@ async def ws_endpoint(ws: WebSocket):
                     audio_frame_count += 1
                     if audio_frame_count == 1 or audio_frame_count % 100 == 0:
                         size = len(packet)
-                        print(f"[WS] audio: frames={audio_frame_count}, latest={size} bytes")
+                        LOGGER.info(f"[WS] audio: frames={audio_frame_count}, latest={size} bytes")
             elif msg.get("type") == "websocket.disconnect":
                 break
     except (WebSocketDisconnect, RuntimeError):
@@ -280,4 +283,4 @@ async def ws_endpoint(ws: WebSocket):
             if pending_device_id == device_id and not response_future.done():
                 response_future.set_exception(WebSocketDisconnect())
                 state.PENDING_ACTIONS.pop(request_id, None)
-    print(f"[WS] {device_id} disconnected, audio_frames={audio_frame_count}")
+    LOGGER.info(f"[WS] {device_id} disconnected, audio_frames={audio_frame_count}")
