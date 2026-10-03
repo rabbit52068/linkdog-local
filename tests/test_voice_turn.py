@@ -564,7 +564,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_streaming_turn_splits_sentences_and_plays_incrementally(self):
         hermes = StreamingHermes([
-            "Hey Nelson, ",
+            "Hey Sam, ",
             "I'm ready. ",
             "Let's go!",
         ])
@@ -580,12 +580,12 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         response = await asyncio.wait_for(worker.next_response(), timeout=0.2)
 
-        self.assertEqual(response, "Hey Nelson, I'm ready. Let's go!")
+        self.assertEqual(response, "Hey Sam, I'm ready. Let's go!")
         # First sentence cut on comma, then strong punctuation.
-        self.assertEqual(tts.calls, ["Hey Nelson,", "I'm ready.", "Let's go!"])
+        self.assertEqual(tts.calls, ["Hey Sam,", "I'm ready.", "Let's go!"])
         # begin + 3 feeds + finish.
         self.assertEqual(len(player.calls), 5)
-        self.assertEqual(player.calls[0], ("Hey Nelson,", b"<begin>"))
+        self.assertEqual(player.calls[0], ("Hey Sam,", b"<begin>"))
         self.assertEqual(player.calls[-1], ("<finish>", b""))
 
     async def test_streaming_turn_emits_full_response(self):

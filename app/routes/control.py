@@ -117,14 +117,14 @@ def resolve_mcp_response(device_id: str, payload: Any) -> bool:
 
 
 async def ensure_listening_state(session: DeviceSession, device_id: str) -> None:
-    """送 action 前，先把設備切到 Listening（AI status = 2）。
+    """Move the device to Listening (AI status 2) before sending a motion.
 
-    根因：設備停在 Idle（AI status = 1）時，C3 會自動 getDown() + 關 servo
-    power。若此時直接送 get_down／wiggle_tail，會與 C3 的自動 transition 競爭，
-    造成 S3 reset。Xiaozhi 的正確做法是先讓設備進 Listening（C3 停在 sitDown
-    穩定狀態），再送 action。
+    Root cause: while the device sits in Idle (AI status 1) the C3 runs its
+    own getDown() and cuts servo power. Sending get_down / wiggle_tail then
+    races that automatic transition and resets the S3. The Xiaozhi approach is
+    to enter Listening first (the C3 settles in sitDown), then send the action.
 
-    透過 tts:start → tts:stop 驅動設備 Idle → Speaking → Listening。
+    tts:start -> tts:stop drives the device Idle -> Speaking -> Listening.
     """
     await session.send_json({"type": "tts", "state": "start"})
     await asyncio.sleep(0.5)

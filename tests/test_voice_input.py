@@ -153,7 +153,7 @@ class VoiceInputPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_stops_uplink_and_emits_utterance(self):
         with self.assertLogs("app", level="INFO") as logs:
             self.pipeline.start_listening()
-            # 喚醒詞丟棄窗口（13 幀）會先吞掉前 13 幀，餵滿後才開始處理
+            # The wake-word discard window swallows the first 13 frames before processing starts
             for _ in range(13):
                 self.session.enqueue_audio(b"wake-tail")
             self.session.enqueue_audio(b"middle")

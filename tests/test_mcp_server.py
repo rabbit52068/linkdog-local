@@ -13,7 +13,7 @@ class McpServerSmokeTests(unittest.IsolatedAsyncioTestCase):
             {tool.name for tool in tools},
             {
                 "linkdog_status",
-                # group2（無參數）
+                # group2 (no parameters)
                 "linkdog_sit",
                 "linkdog_stand",
                 "linkdog_get_down",
@@ -45,12 +45,12 @@ class McpServerSmokeTests(unittest.IsolatedAsyncioTestCase):
                 "linkdog_greetings",
                 "linkdog_drink",
                 "linkdog_fart",
-                # 速度 / 角度 / 屏幕 / 遊戲
+                # speed / angle / screen / game
                 "linkdog_set_speed",
                 "linkdog_angle",
                 "linkdog_set_screen_mode",
                 "linkdog_rock_paper_scissors",
-                # 唱歌 / 查詢類
+                # sing / queries
                 "linkdog_sing",
                 "linkdog_song_current",
                 "linkdog_date_search",

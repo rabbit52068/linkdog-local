@@ -318,7 +318,7 @@ class RedactSecretsTests(unittest.TestCase):
         self.assertEqual(redact_secrets(once), once)
 
     def test_round_two_leak_shapes_are_all_masked(self):
-        """Astra round 2 (R2) measured 6 of these 8 shapes leaking.
+        """A review measured 6 of these 8 shapes leaking.
 
         The prior fix only taught the key/regex pair about the ``bearer``,
         ``token`` and ``basic`` *schemes*, so every shape that put something
@@ -360,7 +360,7 @@ class RedactSecretsTests(unittest.TestCase):
                 self.assertEqual(redact_secrets(once), once)
 
     def test_round_three_leak_shapes_are_all_masked(self):
-        """Astra round 3 (R2): four shapes still leaked after the round-2 fix.
+        """Four shapes still leaked after the first per-scheme fix.
 
         Each one is a *class* of leak, not a one-off string, so the fix was
         structural. These cases pin the structure, not the enumeration:
@@ -466,7 +466,7 @@ class HealthRedactionTests(unittest.TestCase):
         self.assertNotIn(SYNTHETIC_SECRET, body)
 
     def test_health_never_exposes_secret_from_voice_string(self):
-        """R3 (Astra round 2): ``voice`` reached /health verbatim.
+        """``voice`` reached /health verbatim.
 
         The voice string is operator-supplied and may be a full URL carrying a
         query token — and /health is unauthenticated. The pre-fix code returned
@@ -522,7 +522,7 @@ class HealthRedactionTests(unittest.TestCase):
         self.assertNotIn(SYNTHETIC_SECRET, snapshot["voice"])
 
     def test_health_reports_credential_source(self):
-        """R6 (Astra round 2): provenance was dropped before /health.
+        """provenance was dropped before /health.
 
         ``token_source`` was computed and then discarded in
         ``PocketTTSBackend._diagnose_cloning``, so monitoring could not see that
@@ -564,7 +564,7 @@ class HealthRedactionTests(unittest.TestCase):
         self.assertTrue(snapshot["credential"]["degraded"])
         # The observed view: what the backend saw when it diagnosed a failure.
         self.assertEqual(snapshot["credential_source"], hf_token.SOURCE_HUB_CACHE)
-        # R6: durability must be published too — a source alone still lets a
+        # Durability must be published too — a source alone still lets a
         # cache-sourced credential read as healthy. Identity, not truthiness:
         # `None` (never published) is falsy and would satisfy assertFalse.
         self.assertIs(snapshot["credential_durable"], False)
@@ -572,7 +572,7 @@ class HealthRedactionTests(unittest.TestCase):
         self.assertTrue(snapshot["credential"]["degraded"])
 
     def test_health_provenance_failure_does_not_break_the_endpoint(self):
-        """R6 hardening: a broken probe must not take down an unauthenticated
+        """Hardening: a broken probe must not take down an unauthenticated
         monitoring endpoint — but it must also not silently claim health."""
         backend = SimpleNamespace(
             _model=None,
@@ -610,7 +610,7 @@ class HealthRedactionTests(unittest.TestCase):
         self.assertIsNone(health.credential_source_from_backend(None))
 
     def test_pocket_backend_records_source_when_diagnosing_a_failure(self):
-        """The R6 seam itself: ``_diagnose_cloning`` must not drop the source."""
+        """The seam itself: ``_diagnose_cloning`` must not drop the source."""
         from app import hf_token
         from app.tts_auth import GatedAccessDiagnosis, OK
 
@@ -640,7 +640,7 @@ class HealthRedactionTests(unittest.TestCase):
         self.assertIs(backend.cloning_credential_durable, False)
 
     def test_pocket_backend_does_not_inherit_durability_across_observations(self):
-        """R6 (Astra round 3): source and durability must come from ONE probe.
+        """source and durability must come from ONE probe.
 
         Round 3 reproduced a mixed observation: a first diagnosis reporting
         ``project``/``durable=True`` followed by a second reporting

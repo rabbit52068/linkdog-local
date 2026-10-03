@@ -451,7 +451,7 @@ class CredentialProvenanceTests(unittest.TestCase):
         self.assertTrue(provenance.degraded)
 
     def test_same_value_in_cache_and_project_is_not_reported_as_project(self):
-        """R1 (Astra round 3): the *same value* does not mean the *same file*.
+        """the *same value* does not mean the *same file*.
 
         The classifier used to compare the project file's value first, so an
         identical token living in both the project file and the Hub cache was
@@ -487,7 +487,7 @@ class CredentialProvenanceTests(unittest.TestCase):
         self.assertTrue(provenance.degraded)
 
     def test_legacy_env_var_name_matches_the_hub(self):
-        """R1 (Astra round 3): the legacy variable is ``HUGGING_FACE_HUB_TOKEN``.
+        """the legacy variable is ``HUGGING_FACE_HUB_TOKEN``.
 
         The classifier looked for ``HUGGINGFACE_HUB_TOKEN``, which the Hub never
         reads, so a credential set under the real legacy name was silently
@@ -504,7 +504,7 @@ class CredentialProvenanceTests(unittest.TestCase):
         self.assertTrue(provenance.degraded)
 
     def test_unknown_source_is_not_claimed_durable(self):
-        """R1 (Astra round 3): an unverifiable source must not publish durable.
+        """an unverifiable source must not publish durable.
 
         ``SOURCE_OTHER`` said durability "cannot be verified" while computing
         ``durable = not in_cache`` from a possibly unrelated ``HF_TOKEN_PATH`` —

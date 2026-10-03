@@ -32,7 +32,7 @@ class PocketTTSBackendTests(unittest.IsolatedAsyncioTestCase):
 
         backend = PocketTTSBackend(voice="cosette", model_factory=factory)
 
-        first = await backend.synthesize("Hello, Nelson!")
+        first = await backend.synthesize("Hello, friend!")
         second = await backend.synthesize("Sit down.")
 
         self.assertEqual(len(factory_calls), 1)

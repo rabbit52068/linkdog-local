@@ -71,7 +71,7 @@ class BuildArgumentsTests(unittest.TestCase):
             build_arguments("forward", duration=7),
             {"action": "forward", "duration": 7},
         )
-        # clamp 到合法區間
+        # clamped to the valid range
         self.assertEqual(
             build_arguments("forward", duration=99),
             {"action": "forward", "duration": 10},

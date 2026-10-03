@@ -6,8 +6,8 @@ from app.sentence_splitter import SentenceSplitter
 class SentenceSplitterTests(unittest.TestCase):
     def test_first_sentence_cuts_on_comma(self):
         splitter = SentenceSplitter()
-        sentences = splitter.feed("Hey Nelson, I'm ready. Let's go!")
-        self.assertEqual(sentences, ["Hey Nelson,", "I'm ready.", "Let's go!"])
+        sentences = splitter.feed("Hey Sam, I'm ready. Let's go!")
+        self.assertEqual(sentences, ["Hey Sam,", "I'm ready.", "Let's go!"])
 
     def test_subsequent_sentences_cut_on_strong_punctuation(self):
         splitter = SentenceSplitter()

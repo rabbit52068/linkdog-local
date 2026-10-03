@@ -1,28 +1,29 @@
-"""對照官方 repo 的完整動作目錄。
+"""Full action catalog, mirrored from the official firmware.
 
-來源：gitee.com/jeremywang0102/linkdog
-  Third/Code/ESP32S3/xiaozhi-esp32-1.8.12/main/boards/linkdog/linkdog.cc
-  的 InitializeMcpAction()。
+Source: gitee.com/jeremywang0102/linkdog
+  Third/Code/ESP32S3/xiaozhi-esp32-1.8.12/main/boards/linkdog/linkdog.cc,
+  InitializeMcpAction().
 
-這是 adapter（app/main.py）與 MCP client（app/hermes_tools.py）共用的
-單一來源，避免兩邊各自維護一份 allow-list 造成漂移。
+This is the single source shared by the adapter (app/routes/control.py) and
+the MCP client (app/hermes_tools.py), so the two allow-lists cannot drift.
 
-每個動作對應官方韌體暴露的 MCP tool、參數型別與回傳型別：
+Each action maps to the firmware MCP tool, a parameter type and a result type.
 
-參數型別（param_type）：
-  "none"     — 動作類無參數，arguments 含 action 欄位（self.action.group2）
-  "duration" — 持續秒數 1-10，預設 4（self.action.group1）
-  "times"    — 次數 1-5，預設 3（self.action.group3）
-  "speed"    — 速度 1-5（self.action.set_speed）
-  "angle"    — part + angle 0-180（self.action.angle）
-  "mode"     — 0 彩色 / 1 黑白（self.screen.set_mode）
-  "gesture"  — 1 石頭 / 2 剪刀 / 3 布（self.game.rock_paper_scissors）
-  "name"     — 歌名字串（self.song.sing）
-  "empty"    — 真正無參數，arguments 為空 dict（self.song.current / self.date.search）
+Parameter types (param_type):
+  "none"     — no parameters; arguments carry the action name (self.action.group2)
+  "duration" — seconds 1-10, default 4 (self.action.group1)
+  "times"    — repetitions 1-5, default 3 (self.action.group3)
+  "speed"    — speed 1-5 (self.action.set_speed)
+  "angle"    — part + angle 0-180 (self.action.angle)
+  "mode"     — 0 color / 1 black-and-white (self.screen.set_mode)
+  "gesture"  — 1 rock / 2 scissors / 3 paper (self.game.rock_paper_scissors)
+  "name"     — song title string (self.song.sing)
+  "empty"    — truly no parameters; arguments is an empty dict
+               (self.song.current / self.date.search)
 
-回傳型別（result_type）：
-  "action" — 成功回 "true"（bool），失敗回 "false" 或錯誤字串
-  "text"   — 成功回字串內容（查詢類工具）
+Result types (result_type):
+  "action" — "true" on success; "false" or an error string on failure
+  "text"   — the string content on success (query tools)
 """
 
 from typing import Any, Dict, Tuple
@@ -102,17 +103,17 @@ ANGLE_PARTS = {"left_hand", "right_hand", "left_leg", "right_leg", "tail"}
 
 
 def tool_name(action: str) -> str:
-    """回傳動作對應的官方 MCP tool 名稱。"""
+    """Return the firmware MCP tool name for an action."""
     return ACTION_SPECS[action][0]
 
 
 def param_type(action: str) -> str:
-    """回傳動作的參數型別。"""
+    """Return the action's parameter type."""
     return ACTION_SPECS[action][1]
 
 
 def result_type(action: str) -> str:
-    """回傳動作的回傳型別（action / text）。"""
+    """Return the action's result type (action / text)."""
     return ACTION_SPECS[action][2]
 
 
@@ -122,10 +123,10 @@ def _clamp(value: int, ptype: str) -> int:
 
 
 def build_arguments(action: str, **params: Any) -> Dict[str, Any]:
-    """依動作建構官方 MCP tools/call 的 arguments。
+    """Build the firmware MCP tools/call arguments for an action.
 
-    未提供的參數套用 DEFAULTS；超出範圍的數值 clamp 到合法區間。
-    對 angle / mode / gesture 這類必填參數，缺漏時拋 ValueError。
+    Missing parameters take DEFAULTS; out-of-range values are clamped.
+    Required parameters (angle / mode / gesture) raise ValueError when missing.
     """
     ptype = param_type(action)
 

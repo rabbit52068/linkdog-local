@@ -331,7 +331,7 @@ class MetadataIsNotAuthorisationTests(unittest.TestCase):
     def test_default_path_reports_no_access_when_auth_check_rejects(self):
         """The real fallback must surface a rejection as NO_ACCESS, not ok.
 
-        Third review (R5): this test used to assert only ``not OK``, and its
+        This test used to assert only ``not OK``, and its
         double raised a plain ``RuntimeError`` whose *message* merely mentioned
         a 403. Classification reads the exception TYPE and ``status_code``, not
         message text, so a generic error correctly degrades to UNKNOWN — and

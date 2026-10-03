@@ -49,13 +49,13 @@ class ActionValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_rejects_angle_without_part(self):
-        # angle 現在是合法動作，但缺 part 參數應回 400。
+        # angle is allow-listed, but a missing part must return 400.
         response = self.client.post("/xiaozhi/action", json={"action": "angle", "angle": 90})
         self.assertEqual(response.status_code, 400)
 
     def test_get_down_and_wiggle_tail_are_now_allow_listed(self):
-        # 根因已修復（state gate），這兩個動作重新放回 allow-list。
-        # 設備離線時應回 409（連線問題），而非 400（未 allow-list）。
+        # Root cause fixed (state gate), so both actions are allow-listed again.
+        # Offline must return 409 (connection), not 400 (not allow-listed).
         for action in ("get_down", "wiggle_tail"):
             response = self.client.post("/xiaozhi/action", json={"action": action})
             self.assertEqual(response.status_code, 409)
@@ -78,7 +78,7 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
             device_id="TEST:DOG",
             action=action,
         )))
-        # state gate 會先送 tts:start / tts:stop，等 MCP tools/call 出現。
+        # The state gate sends tts:start / tts:stop first; wait for the MCP tools/call.
         while not any(m.get("type") == "mcp" for m in self.ws.messages):
             if task.done():
                 await task

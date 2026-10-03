@@ -132,7 +132,7 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_get_settings_returns_connected_device_mac_and_ip(self):
         state.ACTIVE_SESSIONS["TEST:DOG"] = SimpleNamespace(
-            ip_address="10.1.1.42"
+            ip_address="192.0.2.42"
         )
 
         response = self.client.get("/api/settings")
@@ -141,7 +141,7 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.json()["connected_devices"], ["TEST:DOG"])
         self.assertEqual(response.json()["connected_device_details"], [{
             "device_id": "TEST:DOG",
-            "ip_address": "10.1.1.42",
+            "ip_address": "192.0.2.42",
         }])
 
     def test_put_settings_validates_and_persists_complete_payload(self):
