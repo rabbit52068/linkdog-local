@@ -105,7 +105,7 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "catalog unavailable")
 
-    def test_load_dashboard_settings_environment_fallback_uses_deepseek_flash(self):
+    def test_load_dashboard_settings_environment_fallback_uses_default_model(self):
         empty_store = SettingsStore(Path(self.directory.name) / "missing.json")
         with (
             patch.object(main, "SETTINGS_STORE", empty_store),
@@ -113,7 +113,10 @@ class DashboardApiTests(unittest.TestCase):
         ):
             settings = main.load_dashboard_settings()
 
-        self.assertEqual(settings.model, "deepseek-v4-flash:0731")
+        # Must be the shared constant, not a stale literal: the fallback is
+        # only reachable when settings.json is absent, and whatever it returns
+        # has to be a model PUT /api/settings will accept back.
+        self.assertEqual(settings.model, main.DEFAULT_MODEL)
 
     def test_get_settings_returns_persisted_values_and_device_status(self):
         response = self.client.get("/api/settings")
@@ -144,6 +147,7 @@ class DashboardApiTests(unittest.TestCase):
             "agent_name": "Buddy",
             "system_prompt": "A sweet and playful young friend.",
             "model": "deepseek-v4-flash:0731",
+            "api_url": "https://api.example.com/v1",
             "memory_enabled": True,
             "max_history_turns": 8,
             "user_profile": "The user enjoys playful interaction.",

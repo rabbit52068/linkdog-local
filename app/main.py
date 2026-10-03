@@ -14,15 +14,25 @@ from pydantic import BaseModel
 from app.actions import ACTION_SPECS, build_arguments, result_type, tool_name
 from app.asr import FasterWhisperASR
 from app.audio_codec import OpusCodec
-from app.dashboard_settings import DashboardSettings, SettingsStore
+from app.dashboard_settings import DEFAULT_MODEL, DashboardSettings, SettingsStore
 from app.device_session import DeviceSession, SessionClosedError
 from app.hermes_client import DEFAULT_SYSTEM_PROMPT, HermesAPIClient
+from app.hf_token import credential_provenance
 from app.model_catalog import CatalogUpstreamError, OllamaModelCatalog
 from app.playback import OpusDownlinkPlayer
+from app.pocket_tts import PocketTTSBackend
 from app.tts import CommandTTSBackend
+from app.redact import redact_secrets
+from app.tts_config import classify_voice, resolve_backend, resolve_voice, voice_requires_cloning
 from app.vad import UtteranceEndpoint, WebRtcVadClassifier
 from app.voice_input import VoiceInputPipeline
-from app.voice_turn import VoiceActionError, VoiceTurnWorker
+from app.voice_turn import (
+    VoiceActionError,
+    VoiceTurnWorker,
+    tts_failure_last,
+    tts_failure_process,
+    tts_failure_total,
+)
 
 app = FastAPI(title="hermes-linkdog")
 
@@ -56,8 +66,8 @@ app.mount(
     name="dashboard-assets",
 )
 
-# 對照官方 repo 的完整動作目錄（見 app/actions.py）。
-# 保留 ALLOWED_ACTIONS 作為向後相容的別名：action -> 官方 MCP tool 名稱。
+# Full action catalog mirroring the official repo (see app/actions.py).
+# Keep ALLOWED_ACTIONS as a backward-compatible alias: action -> official MCP tool name.
 ALLOWED_ACTIONS = {action: tool_name(action) for action in ACTION_SPECS}
 ACTIVE_SESSIONS: Dict[str, DeviceSession] = {}
 REQUEST_IDS = itertools.count(1)
@@ -129,7 +139,7 @@ VOICE_ACTION_TOOL = [{
 class ActionRequest(BaseModel):
     action: str
     device_id: Optional[str] = None
-    # 依動作型別透傳的參數（duration / times / speed / part+angle / mode / gesture）
+    # Parameters passed through by action type (duration / times / speed / part+angle / mode / gesture)
     duration: Optional[int] = None
     times: Optional[int] = None
     speed: Optional[int] = None
@@ -145,6 +155,7 @@ class DashboardSettingsRequest(BaseModel):
     agent_name: str
     system_prompt: str
     model: str
+    api_url: str = ""
     memory_enabled: bool
     max_history_turns: int
     user_profile: str = ""
@@ -159,7 +170,8 @@ def load_dashboard_settings() -> DashboardSettings:
     return DashboardSettings(
         agent_name="Xiaobin",
         system_prompt=DEFAULT_SYSTEM_PROMPT,
-        model=os.environ.get("LINKDOG_HERMES_MODEL", "deepseek-v4-flash:0731"),
+        model=os.environ.get("LINKDOG_HERMES_MODEL", DEFAULT_MODEL),
+        api_url=os.environ.get("LINKDOG_HERMES_API_URL", ""),
         memory_enabled=True,
         max_history_turns=int(
             os.environ.get("LINKDOG_HERMES_HISTORY_TURNS", "6")
@@ -228,7 +240,7 @@ async def disconnect_device(session: DeviceSession) -> None:
 
 
 def build_asr() -> FasterWhisperASR:
-    language = os.environ.get("LINKDOG_ASR_LANGUAGE", "zh").strip() or None
+    language = _resolve_asr_language(os.environ.get("LINKDOG_ASR_LANGUAGE", "zh"))
     return FasterWhisperASR(
         model_name=os.environ.get("LINKDOG_ASR_MODEL", "base"),
         device=os.environ.get("LINKDOG_ASR_DEVICE", "cpu"),
@@ -239,20 +251,36 @@ def build_asr() -> FasterWhisperASR:
     )
 
 
+def _resolve_asr_language(raw: Optional[str]) -> Optional[str]:
+    """Map a configured language to a valid faster-whisper language code.
+
+    faster-whisper has no "auto" code; omitting the argument is what triggers
+    language detection. Passing the literal string "auto" raises ValueError on
+    every transcription, so empty and "auto" both become None here.
+    """
+    value = (raw or "").strip()
+    if not value or value.lower() == "auto":
+        return None
+    return value
+
+
 def build_tts() -> Any:
     global _POCKET_TTS_BACKEND
-    if os.environ.get("LINKDOG_TTS_BACKEND", "").strip().lower() == "pocket":
-        from app.pocket_tts import PocketTTSBackend
-
-        voice = os.environ.get("LINKDOG_POCKET_VOICE", "cosette")
+    backend = resolve_backend()
+    if backend == "pocket":
+        voice = resolve_voice()
         if _POCKET_TTS_BACKEND is None or _POCKET_TTS_BACKEND.voice != voice:
             _POCKET_TTS_BACKEND = PocketTTSBackend(voice=voice)
         return _POCKET_TTS_BACKEND
 
+    return build_command_tts()
+
+
+def build_command_tts() -> CommandTTSBackend:
     default_edge_tts = str(Path(sys.executable).with_name("edge-tts"))
     return CommandTTSBackend(
-        voice=os.environ.get("LINKDOG_TTS_VOICE", "zh-TW-HsiaoChenNeural"),
-        fallback_voice=os.environ.get("LINKDOG_TTS_FALLBACK_VOICE", "Meijia"),
+        voice=os.environ.get("LINKDOG_TTS_VOICE", "en-US-AriaNeural"),
+        fallback_voice=os.environ.get("LINKDOG_TTS_FALLBACK_VOICE", "Samantha"),
         edge_tts_command=os.environ.get("LINKDOG_EDGE_TTS_COMMAND", default_edge_tts),
         ffmpeg_command=os.environ.get("LINKDOG_FFMPEG_COMMAND", "ffmpeg"),
         say_command=os.environ.get("LINKDOG_SAY_COMMAND", "say"),
@@ -267,7 +295,7 @@ def build_player(session: DeviceSession) -> OpusDownlinkPlayer:
 def build_hermes_client() -> HermesAPIClient:
     settings = load_dashboard_settings()
     return HermesAPIClient(
-        base_url=os.environ.get(
+        base_url=settings.api_url.strip() or os.environ.get(
             "LINKDOG_HERMES_API_URL",
             "http://127.0.0.1:8642/v1",
         ),
@@ -304,8 +332,8 @@ def handle_device_event(
         and event.get("type") == "listen"
         and event.get("state") == "start"
     ):
-        # 只在「非聆聽 → 聆聽」轉換時才 start；設備會重複發 start，
-        # 若每次都 reset 會把正在累積的語音丟掉，導致 VAD 永遠不觸發。
+        # Only start on the "not-listening → listening" transition; the device re-sends start,
+        # and resetting every time would drop the accumulating speech, so VAD never triggers.
         if not voice_input.is_listening:
             voice_input.start_listening()
     elif event.get("type") == "abort" and voice_turn is not None:
@@ -329,7 +357,7 @@ async def ensure_listening_state(session: DeviceSession, device_id: str) -> None
     await session.send_json({"type": "tts", "state": "start"})
     await asyncio.sleep(0.5)
     await session.send_json({"type": "tts", "state": "stop"})
-    # tts:stop 後設備會 WaitForPlayCompletion(1000) 才切 Listening，多留緩衝。
+    # After tts:stop the device waits WaitForPlayCompletion(1000) before switching to Listening; leave extra buffer.
     await asyncio.sleep(2.5)
     print(f"[STATE] {device_id} set to Listening before action")
 
@@ -340,7 +368,7 @@ async def send_action(request: ActionRequest):
     if mcp_tool is None:
         raise HTTPException(status_code=400, detail="action is not allow-listed")
 
-    # 依動作型別建構官方 MCP arguments（含參數透傳與 clamp）。
+    # Build official MCP arguments by action type (with parameter passthrough and clamping).
     params = {
         "duration": request.duration,
         "times": request.times,
@@ -415,9 +443,9 @@ async def send_action(request: ActionRequest):
         if not isinstance(result, dict) or result.get("isError") is not False:
             raise HTTPException(status_code=502, detail="device reported action failure")
 
-        # 依回傳型別判定成功：
-        #   action — 成功回 "true"（bool），失敗回 "false" 或錯誤字串
-        #   text   — 成功回字串內容（查詢類工具）
+        # Determine success by return type:
+        #   action — success returns "true" (bool), failure returns "false" or an error string
+        #   text   — success returns the string content (query tools)
         content_items = [
             item for item in result.get("content", [])
             if isinstance(item, dict) and item.get("type") == "text"
@@ -431,7 +459,7 @@ async def send_action(request: ActionRequest):
                 raise HTTPException(status_code=502, detail="device reported action failure")
             response_text = None
         else:
-            # text 型別：回傳字串內容
+            # text type: return the string content
             response_text = text_value
 
         print(f"[ACTION] completed {request.action} on {device_id}, request_id={request_id}")
@@ -620,16 +648,210 @@ async def health():
     return {
         "status": "ok",
         "connected_devices": sorted(ACTIVE_SESSIONS),
+        "tts": _tts_health_snapshot(),
     }
 
 
-# 歌單：回空清單，避免設備連 linkdog.me 拉歌單
+def _credential_provenance_snapshot() -> Optional[Dict[str, Any]]:
+    """Report where the Hub credential actually comes from, secret-free.
+
+    R6 (Astra round 2): the durability fix is only observable if provenance
+    reaches an operator. It used to die inside ``pocket_tts``, which kept just
+    ``(outcome, detail)`` — so ``configured_ok: true`` could coexist with
+    "the credential is one cache clear from vanishing" and nothing said so.
+
+    Never raises: a broken probe must not take down /health.
+    """
+    try:
+        provenance = credential_provenance()
+    except Exception as exc:  # noqa: BLE001
+        return {"source": "unknown", "durable": None, "degraded": None, "detail": f"provenance probe failed: {type(exc).__name__}"}
+    return {
+        "source": provenance.source,
+        "durable": provenance.durable,
+        "degraded": provenance.degraded,
+        # Redacted as well: the detail embeds filesystem paths, and future
+        # writers may extend it.
+        "detail": redact_secrets(provenance.detail) if provenance.detail else "",
+    }
+
+
+def credential_source_from_backend(backend_obj: Any) -> Optional[str]:
+    """The credential source the TTS backend actually observed, if any.
+
+    ``None`` when nothing has been probed yet (no failed load), so this never
+    fabricates a verdict. Kept separate from the live snapshot above: this is
+    what the *backend* saw, which is the value a failure diagnosis used.
+    """
+    if backend_obj is None:
+        return None
+    source = getattr(backend_obj, "cloning_credential_source", None)
+    return str(source) if source else None
+
+
+def credential_durable_from_backend(backend_obj: Any) -> Optional[bool]:
+    """The credential durability the TTS backend actually observed, if any.
+
+    Companion to :func:`credential_source_from_backend`. Round-2 review (R6)
+    showed that a source alone is not enough: ``outcome='ok'`` with
+    ``source='hub_cache'`` means the credential works today and is one cache
+    clear from failing, so the durability verdict has to travel alongside it or
+    the operator sees a healthy-looking row that is not durable.
+
+    ``None`` when nothing has been probed yet (no failed load), so this never
+    fabricates a verdict.
+    """
+    if backend_obj is None:
+        return None
+    durable = getattr(backend_obj, "cloning_credential_durable", None)
+    return bool(durable) if durable is not None else None
+
+
+def _tts_health_snapshot() -> Dict[str, Any]:
+    """Report the TTS backend's real state without triggering a model load.
+
+    Reading the resident backend is cheap; we only *inspect* the already-loaded
+    model/state (if any) and never call ``load_model`` here, so /health stays
+    fast and cannot be turned into an accidental model-loading endpoint.
+
+    Three-stage semantics (Astra blocking #3):
+      - Nothing observed yet -> ``voice_cloning_available=None``,
+        ``configured_ok=None``, ``model_status='unknown'`` (never ``false``).
+      - ``ready`` requires BOTH model and state to be present; a model that
+        failed its state prompt is ``failed``, not ``loaded``.
+      - ``catalog`` voices can report ``configured_ok=True`` without a model,
+        but a ``failed`` load is checked FIRST so a broken model can never be
+        masked by the catalog branch.
+      - ``last_error`` is passed through :func:`app.redact.redact_secrets` on
+        the way out; this endpoint is unauthenticated and dashboard-rendered.
+    """
+    backend = resolve_backend()
+    if backend == "pocket":
+        voice = resolve_voice()
+        voice_kind = classify_voice(voice)
+        cloning_required = voice_requires_cloning(voice)
+
+        backend_obj = _POCKET_TTS_BACKEND
+        load_status = getattr(backend_obj, "load_status", None) if (
+            backend_obj is not None
+        ) else None
+        model = getattr(backend_obj, "_model", None) if backend_obj is not None else None
+        state = getattr(backend_obj, "_state", None) if backend_obj is not None else None
+        last_error = getattr(backend_obj, "last_error", None) if backend_obj is not None else None
+
+        if load_status == "ready" and model is not None and state is not None:
+            model_status = "ready"
+            cloning_available = bool(getattr(model, "has_voice_cloning", False))
+        elif load_status == "loading":
+            model_status = "loading"
+            cloning_available = None
+        elif load_status == "failed":
+            model_status = "failed"
+            cloning_available = None
+        else:
+            # idle / unknown / no backend object yet: nothing observed.
+            model_status = "unknown"
+            cloning_available = None
+
+        # Only ever populated on a failed load (see PocketTTSBackend); it
+        # explains *why* cloning is unavailable instead of leaving an operator
+        # with the generic VOICE_CLONING_UNSUPPORTED message.
+        cloning_diagnosis = (
+            getattr(backend_obj, "cloning_diagnosis", None)
+            if backend_obj is not None
+            else None
+        )
+        cloning_diagnosis_detail = (
+            getattr(backend_obj, "cloning_diagnosis_detail", None)
+            if backend_obj is not None
+            else None
+        )
+
+        if model_status == "failed":
+            # A failed model load is a real failure for EVERY voice kind,
+            # catalog included. "Needs no cloning" != "model loads"; letting
+            # the catalog branch answer first would reinstate exactly the
+            # false-ok that this snapshot exists to eliminate.
+            configured_ok = False
+        elif voice_kind == "catalog":
+            # Catalog voices need no cloning and no model to be known-good.
+            configured_ok = True
+        elif model_status in ("unknown", "loading"):
+            # Nothing observed yet, or a load in flight: unknown, not a verdict.
+            configured_ok = None
+        else:  # ready
+            configured_ok = (not cloning_required) or bool(cloning_available)
+
+        return {
+            "backend": "pocket",
+            # R3 (Astra round 2): the voice string reaches /health verbatim. It is
+            # operator-supplied and may be a full URL carrying a credential in the
+            # query string (LINKDOG_POCKET_VOICE=https://host/voice.wav?token=...),
+            # and /health is unauthenticated. Redact on the way out — this leak
+            # needs no exception and would survive any fix confined to
+            # pocket_tts/last_error.
+            "voice": redact_secrets(voice),
+            "voice_kind": voice_kind,
+            "voice_cloning_required": cloning_required,
+            "voice_cloning_available": cloning_available,
+            "configured_ok": configured_ok,
+            "model_status": model_status,
+            # Explains why voice cloning is unavailable (no_token / invalid_token
+            # / no_access / network), instead of leaving only the generic
+            # VOICE_CLONING_UNSUPPORTED text in last_error. Both are secret-free.
+            "cloning_diagnosis": (
+                redact_secrets(cloning_diagnosis) if cloning_diagnosis else None
+            ),
+            "cloning_diagnosis_detail": (
+                redact_secrets(cloning_diagnosis_detail)
+                if cloning_diagnosis_detail
+                else None
+            ),
+            # R6 (Astra round 2): where the credential ACTUALLY comes from, end to
+            # end. The backend used to keep only (outcome, detail), so provenance
+            # died inside pocket_tts and "ok" could still mean "one cache clear
+            # from failing". Both values are secret-free by construction.
+            "credential": _credential_provenance_snapshot(),
+            "credential_source": credential_source_from_backend(backend_obj),
+            # R6: durability must travel with the source. A working-but-cache-
+            # sourced credential reports outcome='ok'; without this the row
+            # reads healthy while it is one cache clear from failing.
+            "credential_durable": credential_durable_from_backend(backend_obj),
+            # Defence in depth: the backend already redacts at the source, but
+            # /health is unauthenticated and dashboard-rendered, so mask again
+            # on the way out rather than trusting every future writer.
+            "last_error": redact_secrets(last_error) if last_error else None,
+            "tts_failures": tts_failure_total(),
+            "tts_failure_last": tts_failure_last(),
+            "tts_failure_process": tts_failure_process(),
+        }
+
+    return {
+        "backend": backend,
+        "voice": redact_secrets(os.environ.get("LINKDOG_TTS_VOICE", "")),
+        "voice_kind": "n/a",
+        "voice_cloning_required": False,
+        "voice_cloning_available": None,
+        "configured_ok": True,
+        "model_status": "n/a",
+        "cloning_diagnosis": None,
+        "cloning_diagnosis_detail": None,
+        "credential": _credential_provenance_snapshot(),
+        "credential_source": None,
+        "last_error": None,
+        "tts_failures": tts_failure_total(),
+        "tts_failure_last": tts_failure_last(),
+        "tts_failure_process": tts_failure_process(),
+    }
+
+
+# Song list: return an empty list so the device does not fetch from linkdog.me
 @app.get("/xiaozhi/music/list.json")
 async def music_list():
     return JSONResponse({"version": 0, "songs": []})
 
 
-# Custom 1.8.15 已部署；回相同版本以避免重複 OTA（force=1 可強制重刷/降級）。
+# Custom 1.8.15 is deployed; return the same version to avoid repeated OTA (force=1 forces reflash/downgrade).
 @app.get("/xiaozhi/ota/esp32s3/firmware.json")
 async def s3_firmware():
     return JSONResponse({
@@ -640,7 +862,7 @@ async def s3_firmware():
     })
 
 
-# S3 custom firmware 下載（保留供之後 USB 或其他恢復流程使用）
+# S3 custom firmware download (kept for later USB or other recovery flows)
 @app.get("/xiaozhi/ota/esp32s3/linkdog-s3-ota_1.8.15.bin")
 async def s3_firmware_bin():
     return FileResponse(
@@ -650,7 +872,7 @@ async def s3_firmware_bin():
     )
 
 
-# 從 repo 的 16MB merged image抽出的原版 ota_0 app（embedded version 1.8.12）。
+# Stock ota_0 app extracted from the repo's 16MB merged image (embedded version 1.8.12).
 @app.get("/xiaozhi/ota/esp32s3/linkdog-s3-stock_1.8.12-ota.bin")
 async def s3_stock_firmware_bin():
     return FileResponse(
@@ -665,7 +887,7 @@ async def s3_stock_firmware_bin():
     )
 
 
-# C3 firmware manifest：回當前版本 2.0.3（= 設備版本，不觸發 C3 升級）
+# C3 firmware manifest: return current version 2.0.3 (= device version, no C3 upgrade triggered)
 @app.get("/xiaozhi/ota/esp32c3/firmware.json")
 async def c3_firmware():
     return JSONResponse({
@@ -678,12 +900,12 @@ async def c3_firmware():
 
 @app.post("/xiaozhi/ota/")
 async def ota_bootstrap(request: Request):
-    # 設備 POST 設備 JSON，body 內容本階段不需解析，僅記錄 device id
+    # Device POSTs device JSON; body content is not parsed at this stage, only the device id is logged
     body = await request.body()
     device_id = request.headers.get("device-id", "unknown")
     print(f"[OTA] bootstrap from {device_id}, body={len(body)} bytes")
 
-    # 關鍵：只回 websocket section，絕不回 mqtt（否則設備走 MQTT）
+    # Critical: return only the websocket section, never mqtt (otherwise the device uses MQTT)
     return JSONResponse({
         "websocket": {
             "url": f"ws://{HOST}:{PORT}/xiaozhi/ws",
@@ -695,21 +917,21 @@ async def ota_bootstrap(request: Request):
 @app.websocket("/xiaozhi/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    # 讀設備 hello
+    # Read the device hello
     raw = await ws.receive_text()
     hello = json.loads(raw)
     device_id = ws.headers.get("device-id", "unknown")
     print(f"[WS] hello from {device_id}: type={hello.get('type')}, "
           f"audio={hello.get('audio_params')}")
 
-    # 回 server hello（transport 必須是 websocket，否則設備判定失敗）
+    # Send server hello (transport must be websocket, otherwise the device rejects it)
     await ws.send_text(json.dumps({
         "type": "hello",
         "transport": "websocket",
         "session_id": f"session-{device_id}",
         "audio_params": {
             "format": "opus",
-            "sample_rate": 16000,   # 與設備硬體一致，避免重採樣
+            "sample_rate": 16000,   # match device hardware to avoid resampling
             "channels": 1,
             "frame_duration": 60,
         },
@@ -752,7 +974,7 @@ async def ws_endpoint(ws: WebSocket):
     if SETTINGS_STORE.path.exists():
         session.start_task(apply_saved_volume(device_id))
 
-    # 保持連線，處理控制訊息並統計音訊幀
+    # Keep the connection, handle control messages, and count audio frames
     audio_frame_count = 0
 
     try:

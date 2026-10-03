@@ -43,7 +43,7 @@ class LinkDogClient:
         if action not in ACTION_SPECS:
             raise LinkDogToolError(f"action is disabled: {action}")
 
-        # 依動作型別建構官方 MCP arguments（含參數透傳與 clamp）。
+        # Build official MCP arguments by action type (with parameter passthrough and clamping).
         try:
             arguments = build_arguments(action, **params)
         except ValueError as exc:
@@ -53,7 +53,7 @@ class LinkDogClient:
             "device_id": self.device_id,
             "action": action,
         }
-        # 把參數一併送給 adapter（adapter 會再依型別建構 arguments）。
+        # Forward the parameters to the adapter (which builds arguments by type).
         payload.update(params)
 
         try:

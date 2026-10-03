@@ -128,6 +128,25 @@ class VoiceWiringTests(unittest.TestCase):
         self.assertEqual(backend.edge_tts_command, "/tmp/edge-tts")
         self.assertEqual(backend.ffmpeg_command, "/tmp/ffmpeg")
 
+    def test_asr_language_auto_enables_detection(self):
+        # faster-whisper rejects the literal string "auto"; detection must be
+        # requested by passing None instead.
+        for raw in ("auto", "AUTO", "", "   "):
+            with self.subTest(raw=raw), patch.dict(
+                "os.environ",
+                {"LINKDOG_ASR_MODEL": "base", "LINKDOG_ASR_LANGUAGE": raw},
+                clear=True,
+            ):
+                self.assertIsNone(build_asr().language)
+
+    def test_asr_language_pins_explicit_code(self):
+        with patch.dict(
+            "os.environ",
+            {"LINKDOG_ASR_MODEL": "base", "LINKDOG_ASR_LANGUAGE": "en"},
+            clear=True,
+        ):
+            self.assertEqual(build_asr().language, "en")
+
     def test_default_tts_uses_edge_tts_from_active_python_environment(self):
         with patch.dict("os.environ", {}, clear=True):
             backend = build_tts()

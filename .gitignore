@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 
+# HuggingFace token lives here (app/hf_token.py pins HF_TOKEN_PATH to it).
+# Kept outside the Hub cache dir so clearing the cache cannot destroy the
+# credential -- see the 2026-09-13 silent-TTS-degradation post-mortem.
+secrets/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -29,8 +34,25 @@ voices/
 # One-off generation scripts
 _gen_*.py
 
-# Internal debugging docs (contain MAC/IP/PID/paths) — production only.
-# This repo's docs/ holds clean, publishable docs and is tracked.
+# Internal debugging docs (contain MAC/IP/PID/paths); publishable docs are
+# re-included explicitly.
+docs/*
+!docs/pocket-tts.md
 
 # Hermes internal
 .hermes/
+
+# Firmware source snapshots (contain closed-source blobs)
+firmware-source-backup/
+
+# Local agent context (personal)
+.hermes.md
+
+# Old public-repo staging copy (superseded by this repo)
+linkdog-repo/
+
+# Persisted conversation history (PII)
+data/history.json
+
+# Runtime logs
+logs/

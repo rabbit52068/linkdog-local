@@ -3,12 +3,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.dashboard_settings import DashboardSettings, SettingsStore
+from app.dashboard_settings import DEFAULT_MODEL, DashboardSettings, SettingsStore
 
 
 class SettingsStoreTests(unittest.TestCase):
-    def test_dashboard_settings_default_model_is_deepseek_flash(self):
-        self.assertEqual(DashboardSettings().model, "deepseek-v4-flash:0731")
+    def test_dashboard_settings_default_model_is_a_catalog_valid_model(self):
+        # Regression guard: the fallback model must be one the dashboard will
+        # accept back. PUT /api/settings rejects any model missing from the
+        # live Ollama catalog, and the catalog keeps only the highest version
+        # of each approved family. "deepseek-v4-flash:0731" was returned as the
+        # default long after ollama.com stopped serving it, so a wiped
+        # settings.json produced a model the dashboard refused to persist.
+        self.assertEqual(DashboardSettings().model, DEFAULT_MODEL)
+        self.assertEqual(DEFAULT_MODEL, "deepseek-v4.1-flash")
 
     def test_missing_file_uses_supplied_defaults(self):
         with tempfile.TemporaryDirectory() as directory:

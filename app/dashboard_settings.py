@@ -10,11 +10,24 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
+# Fallback model, used only when no settings.json exists yet.
+#
+# This MUST stay inside the set the dashboard will accept back: PUT
+# /api/settings rejects any model that is not present in the live Ollama
+# catalog, and the catalog deliberately keeps only the highest version of each
+# approved family (app/model_catalog.py::filter_highest_version_models). The
+# previous default "deepseek-v4-flash:0731" is no longer served — ollama.com
+# now exposes "deepseek-v4.1-flash" — so it was a value the dashboard returned
+# but refused to persist. Keep this in sync with the live catalog.
+DEFAULT_MODEL = "deepseek-v4.1-flash"
+
+
 @dataclass(frozen=True)
 class DashboardSettings:
     agent_name: str = "Xiaobin"
     system_prompt: str = ""
-    model: str = "deepseek-v4-flash:0731"
+    model: str = DEFAULT_MODEL
+    api_url: str = ""
     memory_enabled: bool = True
     max_history_turns: int = 6
     user_profile: str = ""

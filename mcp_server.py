@@ -28,7 +28,7 @@ def linkdog_status() -> dict:
     return client().status()
 
 
-# --- group2：無參數動作 ---
+# --- group2: no-parameter actions ---
 
 
 @mcp.tool
@@ -121,7 +121,7 @@ def linkdog_shiver() -> dict:
     return client().execute("shiver")
 
 
-# --- group1：duration 動作（1-10 秒，預設 4） ---
+# --- group1: duration actions (1-10 seconds, default 4) ---
 
 
 @mcp.tool
@@ -184,7 +184,7 @@ def linkdog_spin_around(duration: int = 4) -> dict:
     return client().execute("spin_around", duration=duration)
 
 
-# --- group3：times 動作（1-5 次，預設 3） ---
+# --- group3: times actions (1-5 times, default 3) ---
 
 
 @mcp.tool
@@ -211,7 +211,7 @@ def linkdog_fart(times: int = 3) -> dict:
     return client().execute("fart", times=times)
 
 
-# --- 速度 / 角度 / 屏幕 / 遊戲 ---
+# --- speed / angle / screen / game ---
 
 
 @mcp.tool
@@ -238,7 +238,7 @@ def linkdog_rock_paper_scissors(gesture: int) -> dict:
     return client().execute("rock_paper_scissors", gesture=gesture)
 
 
-# --- 唱歌 / 查詢類 ---
+# --- sing / query ---
 
 
 @mcp.tool

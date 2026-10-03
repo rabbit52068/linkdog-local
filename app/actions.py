@@ -27,9 +27,9 @@
 
 from typing import Any, Dict, Tuple
 
-# action name -> (官方 MCP tool name, 參數型別, 回傳型別)
+# action name -> (official MCP tool name, parameter type, return type)
 ACTION_SPECS: Dict[str, Tuple[str, str, str]] = {
-    # group1 — 運動動作集合1（duration 1-10，預設 4）
+    # group1 — motion set 1 (duration 1-10, default 4)
     "forward": ("self.action.group1", "duration", "action"),
     "left": ("self.action.group1", "duration", "action"),
     "right": ("self.action.group1", "duration", "action"),
@@ -40,7 +40,7 @@ ACTION_SPECS: Dict[str, Tuple[str, str, str]] = {
     "crawl": ("self.action.group1", "duration", "action"),
     "wiggle": ("self.action.group1", "duration", "action"),
     "spin_around": ("self.action.group1", "duration", "action"),
-    # group2 — 運動動作集合2（無參數）
+    # group2 — motion set 2 (no parameters)
     "stand_up": ("self.action.group2", "none", "action"),
     "get_down": ("self.action.group2", "none", "action"),
     "sit_down": ("self.action.group2", "none", "action"),
@@ -56,37 +56,37 @@ ACTION_SPECS: Dict[str, Tuple[str, str, str]] = {
     "sleep": ("self.action.group2", "none", "action"),
     "shiver": ("self.action.group2", "none", "action"),
     "wiggle_tail": ("self.action.group2", "none", "action"),
-    # group3 — 運動動作集合3（times 1-5，預設 3）
+    # group3 — motion set 3 (times 1-5, default 3)
     "push_up": ("self.action.group3", "times", "action"),
     "greetings": ("self.action.group3", "times", "action"),
     "drink": ("self.action.group3", "times", "action"),
     "fart": ("self.action.group3", "times", "action"),
-    # 速度控制
+    # speed control
     "set_speed": ("self.action.set_speed", "speed", "action"),
     # S3 hardware speaker volume (official common MCP tools)
     "set_volume": ("self.audio_speaker.set_volume", "volume", "action"),
     "get_device_status": ("self.get_device_status", "empty", "text"),
-    # 四肢/尾巴角度
+    # limb/tail angle
     "angle": ("self.action.angle", "angle", "action"),
-    # 屏幕模式
+    # screen mode
     "set_screen_mode": ("self.screen.set_mode", "mode", "action"),
-    # 石頭剪刀布
+    # rock-paper-scissors
     "rock_paper_scissors": ("self.game.rock_paper_scissors", "gesture", "action"),
-    # 唱歌（成功回 true，失敗回錯誤字串）
+    # sing (returns true on success, error string on failure)
     "sing": ("self.song.sing", "name", "action"),
-    # 查詢類（回字串）
+    # query type (returns string)
     "song_current": ("self.song.current", "empty", "text"),
     "date_search": ("self.date.search", "empty", "text"),
 }
 
-# 參數預設值
+# parameter defaults
 DEFAULTS: Dict[str, int] = {
     "duration": 4,
     "times": 3,
     "speed": 3,
 }
 
-# 參數合法範圍（含端點）
+# valid parameter ranges (inclusive)
 RANGES: Dict[str, Tuple[int, int]] = {
     "duration": (1, 10),
     "times": (1, 5),
@@ -97,7 +97,7 @@ RANGES: Dict[str, Tuple[int, int]] = {
     "volume": (10, 100),
 }
 
-# self.action.angle 的合法 part
+# valid part values for self.action.angle
 ANGLE_PARTS = {"left_hand", "right_hand", "left_leg", "right_leg", "tail"}
 
 

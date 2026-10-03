@@ -3,16 +3,60 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import re
 import time
+import traceback
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from app.asr import ASRError, ASRTimeoutError
 from app.device_session import DeviceSession, DeviceState
 from app.hermes_client import HermesAPIError, HermesToolCall
 from app.playback import PlaybackError
+from app.redact import redact_secrets
 from app.sentence_splitter import SentenceSplitter
 from app.tts import TTSError, extract_emotion_prefix, sanitize_spoken_text
+
+LOGGER = logging.getLogger(__name__)
+
+# Process-wide total of TTS synthesis failures, exposed via /health so a
+# silently-degraded TTS backend is observable even when no single turn holds a
+# reference to the failure count.
+_TTS_FAILURE_TOTAL = 0
+_TTS_FAILURE_LAST: Optional[str] = None
+
+# Process startup identifier: lets monitoring distinguish "count reset because
+# the adapter restarted" from "count genuinely stopped growing".
+_TTS_FAILURE_PROCESS = (
+    f"pid={os.getpid()} "
+    f"boot={datetime.now(timezone.utc).isoformat()}"
+)
+
+# Bounds for _format_cause(). The chain is rendered as
+# "Outer: msg <- Middle: msg <- Root: msg"; the ROOT CAUSE IS LAST, so the
+# whole-chain truncation must preserve the tail as well as the head — cutting
+# from the end alone drops the very thing the helper exists to surface.
+# Per-segment bound stops one huge outer message (HTTP error bodies can be
+# kilobytes) from crowding out the remaining links.
+_CAUSE_SEGMENT_LIMIT = 400
+_CAUSE_TOTAL_LIMIT = 600
+
+
+def tts_failure_total() -> int:
+    """Return the process-wide count of TTS synthesis failures."""
+    return _TTS_FAILURE_TOTAL
+
+
+def tts_failure_last() -> Optional[str]:
+    """Return the ISO8601 timestamp of the most recent TTS failure (or None)."""
+    return _TTS_FAILURE_LAST
+
+
+def tts_failure_process() -> str:
+    """Return a stable process-startup identifier for this worker process."""
+    return _TTS_FAILURE_PROCESS
 
 
 class VoiceActionError(RuntimeError):
@@ -121,8 +165,8 @@ class VoiceTurnWorker:
                 try:
                     pcm = await self.tts.synthesize(spoken)
                     await self.player.play(spoken, pcm)
-                except TTSError:
-                    self.tts_failures += 1
+                except TTSError as error:
+                    self._note_tts_failure(error, spoken, self._generation)
                 except PlaybackError:
                     self.playback_failures += 1
         except asyncio.CancelledError:
@@ -255,8 +299,8 @@ class VoiceTurnWorker:
             spoken_response = sanitize_spoken_text(spoken_response)
             try:
                 pcm = await self.tts.synthesize(spoken_response)
-            except TTSError:
-                self.tts_failures += 1
+            except TTSError as error:
+                self._note_tts_failure(error, spoken_response, generation)
                 await self._recover_if_current(generation)
                 return
             if not self._is_current(generation):
@@ -342,8 +386,8 @@ class VoiceTurnWorker:
             return
         try:
             pcm = await self.tts.synthesize(spoken)
-        except TTSError:
-            self.tts_failures += 1
+        except TTSError as error:
+            self._note_tts_failure(error, spoken, generation)
             await self._recover_if_current(generation)
             return
         if not self._is_current(generation):
@@ -366,8 +410,8 @@ class VoiceTurnWorker:
         spoken_response = sanitize_spoken_text(spoken_response)
         try:
             pcm = await self.tts.synthesize(spoken_response)
-        except TTSError:
-            self.tts_failures += 1
+        except TTSError as error:
+            self._note_tts_failure(error, spoken_response, generation)
             await self._recover_if_current(generation)
             return
         if not self._is_current(generation):
@@ -410,6 +454,74 @@ class VoiceTurnWorker:
 
     def _is_current(self, generation: int) -> bool:
         return generation == self._generation and not self.session.closed
+
+    def _note_tts_failure(
+        self,
+        error: BaseException,
+        text: str,
+        generation: int,
+    ) -> None:
+        """Record and log a TTS synthesis failure without changing control flow."""
+        global _TTS_FAILURE_TOTAL, _TTS_FAILURE_LAST
+        self.tts_failures += 1
+        _TTS_FAILURE_TOTAL += 1
+        _TTS_FAILURE_LAST = datetime.now(timezone.utc).isoformat()
+        preview = (text or "").replace("\n", " ").strip()
+        if len(preview) > 120:
+            preview = preview[:120] + "…"
+        # Preserve the root cause: a chained exception (e.g. gated weight
+        # download failure, corrupt reference audio) is otherwise invisible.
+        cause_detail = self._format_cause(error)
+        LOGGER.warning(
+            "TTS synthesis failed: device=%s generation=%d tts_failures=%d "
+            "error=%r text=%r cause=%s",
+            self.session.device_id,
+            generation,
+            self.tts_failures,
+            redact_secrets(str(error)),
+            redact_secrets(preview),
+            cause_detail,
+        )
+
+    @staticmethod
+    def _format_cause(error: BaseException) -> str:
+        """Render the exception chain (type + message), truncated, no traceback spam.
+
+        Includes the ``__cause__`` / ``__context__`` chain so the real root
+        cause stays visible in the log. The *root cause is the last link*, so
+        truncation keeps both ends: a long outer message (e.g. an HTTP error
+        body) must not push the root cause past the cut — that would defeat
+        the entire purpose of this helper.
+
+        Every segment is passed through :func:`app.redact.redact_secrets`:
+        exception text can embed a request URL, and URLs can carry
+        ``?token=...``. Logs are copied into tickets and dashboards, so the
+        credential must be masked at the source.
+        """
+        parts: list[str] = []
+        seen: set[int] = set()
+        current: BaseException | None = error
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            parts.append(
+                f"{type(current).__name__}: {redact_secrets(str(current))}"
+            )
+            current = current.__cause__ or current.__context__
+
+        # Per-segment bound: one enormous outer message cannot crowd out the
+        # rest of the chain.
+        bounded = [part if len(part) <= _CAUSE_SEGMENT_LIMIT else (
+            part[: _CAUSE_SEGMENT_LIMIT // 2]
+            + "…"
+            + part[-_CAUSE_SEGMENT_LIMIT // 2 :]
+        ) for part in parts]
+        chain = " <- ".join(bounded)
+
+        # Whole-chain bound: keep head *and* tail so the root cause survives.
+        if len(chain) > _CAUSE_TOTAL_LIMIT:
+            half = _CAUSE_TOTAL_LIMIT // 2
+            chain = chain[:half] + "…[truncated]…" + chain[-half:]
+        return chain
 
     async def _cancel_active_turn(self) -> None:
         task = self._active_turn

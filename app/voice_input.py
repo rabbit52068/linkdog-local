@@ -50,7 +50,7 @@ class VoiceInputPipeline:
         self.endpoint.reset()
         self._clear_utterances()
         self._listening = True
-        # 丟掉喚醒詞尾音（約 800ms = 13 幀 @ 60ms），避免「小斌小斌」殘音被當成指令
+        # Drop the wake-word tail (~800ms = 13 frames @ 60ms) so the "Xiaobin Xiaobin" residue is not treated as a command
         self._discard_frames = 13
         self.session.state = DeviceState.LISTENING
         self._start_idle_timer()

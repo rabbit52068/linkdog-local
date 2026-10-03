@@ -55,6 +55,11 @@
               <option value="" disabled selected>Loading models…</option>
             </select>
           </label>
+          <label class="field compact">
+            <span>API URL</span>
+            <input id="api-url" name="api_url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" required>
+            <small>OpenAI-compatible endpoint the adapter sends chat requests to. The API key stays in <code>.env</code>.</small>
+          </label>
           <div class="setting-row">
             <div><strong>Memory</strong><p>Include conversation history and the entries below.</p></div>
             <label class="switch"><input id="memory-enabled" name="memory_enabled" type="checkbox"><span aria-hidden="true"></span><em>Enabled</em></label>
