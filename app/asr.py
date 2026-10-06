@@ -75,6 +75,10 @@ class FasterWhisperASR:
         if len(pcm) % 2:
             raise ASRError("ASR input must contain complete signed 16-bit samples")
 
+    def warm(self) -> None:
+        """Load the model now so the first utterance does not pay for it."""
+        self._get_model()
+
     def _get_model(self) -> Any:
         if self._model is None:
             with self._model_lock:

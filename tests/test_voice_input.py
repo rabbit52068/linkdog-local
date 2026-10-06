@@ -152,6 +152,7 @@ class VoiceInputPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_endpoint_stops_uplink_and_emits_utterance(self):
         with self.assertLogs("app", level="INFO") as logs:
+            self.pipeline.note_wake_word()
             self.pipeline.start_listening()
             # The wake-word discard window swallows the first 13 frames before processing starts
             for _ in range(13):
@@ -175,6 +176,21 @@ class VoiceInputPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.websocket.messages,
             [{"type": "tts", "state": "start"}],
         )
+
+    async def test_wake_word_tail_is_dropped_only_after_a_wake_word(self):
+        self.pipeline.note_wake_word()
+        self.pipeline.start_listening()
+        self.session.enqueue_audio(b"wake-tail")
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.endpoint.frames, [])
+
+        # An auto-mode follow-up has no wake word: nothing is discarded.
+        self.pipeline._listening = False
+        self.session.state = DeviceState.LISTENING
+        self.pipeline.start_listening()
+        self.session.enqueue_audio(b"first-word")
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.endpoint.frames, [b"pcm:first-word"])
 
     async def test_second_endpoint_is_blocked_until_next_listen_start(self):
         self.pipeline.start_listening()

@@ -284,6 +284,17 @@ class VoiceWiringTests(unittest.TestCase):
         )
 
         pipeline.start_listening.assert_not_called()
+        pipeline.note_wake_word.assert_called_once_with()
+
+    def test_build_asr_reuses_one_backend_until_config_changes(self):
+        env = {"LINKDOG_ASR_MODEL": "base", "LINKDOG_ASR_LANGUAGE": "en"}
+        with patch.dict("os.environ", env, clear=True):
+            first = build_asr()
+            self.assertIs(build_asr(), first)
+        with patch.dict(
+            "os.environ", {**env, "LINKDOG_ASR_MODEL": "tiny"}, clear=True
+        ):
+            self.assertIsNot(build_asr(), first)
 
     def test_routes_wake_word_abort_to_voice_turn(self):
         async def scenario():

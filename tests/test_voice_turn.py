@@ -391,6 +391,46 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tts.calls, ["Okay, I sat down."])
         self.assertEqual(player.calls, [("Okay, I sat down.", b"action-pcm")])
 
+    async def test_action_confirmation_reopens_speaking_after_state_gate(self):
+        """The motion gate leaves the device in Listening; the confirmation
+        must send a fresh tts:start, or the device never re-announces
+        listen:start and the next utterance is ignored."""
+        from app.playback import OpusDownlinkPlayer
+
+        class Codec:
+            samples_per_channel = 960
+            channels = 1
+
+            def encode(self, frame):
+                return b"opus"
+
+            def close(self):
+                pass
+
+        async def no_sleep(_seconds):
+            return None
+
+        player = OpusDownlinkPlayer(self.session, Codec(), sleep=no_sleep)
+        worker = await self.start_worker(
+            FakeASR(result="stand up"),
+            chat=StreamingHermes([ChatToolCall("linkdog_action", {"action": "stand_up"})]),
+            tts=FakeTTS(pcm=b"\0\0" * 960),
+            player=player,
+            action_executor=FakeActionExecutor(response="Okay, I'm standing up."),
+        )
+        with self.assertLogs("app.voice_turn", level="INFO") as logs:
+            await self.voice_input.utterances.put(b"pcm")
+            await asyncio.wait_for(worker.next_response(), timeout=0.5)
+
+        json_messages = [m for m in self.websocket.messages if isinstance(m, dict)]
+        self.assertIn({"type": "tts", "state": "start"}, json_messages)
+        self.assertEqual(json_messages[-1], {"type": "tts", "state": "stop"})
+        self.assertEqual(self.session.state, DeviceState.LISTENING)
+        timing = [r.getMessage() for r in logs.records if "[VOICE-TIMING]" in r.getMessage()]
+        self.assertEqual(len(timing), 1)
+        for stage in ("asr_ms=", "llm_first_ms=", "action_ms=", "first_audio_ms=", "total_ms="):
+            self.assertIn(stage, timing[0])
+
     async def test_action_failure_speaks_failure_without_claiming_success(self):
         executor = FakeActionExecutor(error=VoiceActionError("MCP timeout"))
         tts = FakeTTS(pcm=b"failure-pcm")

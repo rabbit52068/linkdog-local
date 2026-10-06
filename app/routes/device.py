@@ -53,7 +53,8 @@ def build_voice_input(
         pre_roll_ms=300,
         minimum_speech_ms=300,
         end_silence_ms=440,
-        maximum_utterance_ms=12_000,
+        # Background noise can hold the VAD open; cap the wait at 7 s.
+        maximum_utterance_ms=7_000,
     )
     return VoiceInputPipeline(
         session=session,
@@ -73,15 +74,26 @@ async def disconnect_device(session: DeviceSession) -> None:
 
 
 def build_asr() -> FasterWhisperASR:
-    language = _resolve_asr_language(os.environ.get("LINKDOG_ASR_LANGUAGE", "auto"))
-    return FasterWhisperASR(
+    """Return the process-wide ASR backend, rebuilding it only on config change.
+
+    Building one per connection made every reconnect (the device drops the
+    socket after each idle timeout) reload the model on its first utterance.
+    """
+    config = dict(
         model_name=os.environ.get("LINKDOG_ASR_MODEL", "base"),
         device=os.environ.get("LINKDOG_ASR_DEVICE", "cpu"),
         compute_type=os.environ.get("LINKDOG_ASR_COMPUTE_TYPE", "int8"),
-        language=language,
+        language=_resolve_asr_language(
+            os.environ.get("LINKDOG_ASR_LANGUAGE", "auto")
+        ),
         timeout_seconds=float(os.environ.get("LINKDOG_ASR_TIMEOUT", "15")),
         initial_prompt=os.environ.get("LINKDOG_ASR_INITIAL_PROMPT") or None,
     )
+    cached = state.ASR_BACKEND
+    if cached is None or state.ASR_CONFIG != config:
+        state.ASR_BACKEND = FasterWhisperASR(**config)
+        state.ASR_CONFIG = config
+    return state.ASR_BACKEND
 
 
 def _resolve_asr_language(raw: Optional[str]) -> Optional[str]:
@@ -167,7 +179,18 @@ def handle_device_event(
         # and resetting every time would drop the accumulating speech, so VAD never triggers.
         if not voice_input.is_listening:
             voice_input.start_listening()
+    elif (
+        voice_input is not None
+        and event.get("type") == "listen"
+        and event.get("state") == "detect"
+    ):
+        # A wake word was spoken: its tail must be dropped from the next
+        # listening window. Auto-mode follow-ups have no wake word.
+        voice_input.note_wake_word()
     elif event.get("type") == "abort" and voice_turn is not None:
+        # The device aborts playback when it hears the wake word.
+        if voice_input is not None:
+            voice_input.note_wake_word()
         reason = str(event.get("reason") or "unknown")
         return voice_turn.session.start_task(voice_turn.abort(reason))
     elif event.get("type") == "mcp":

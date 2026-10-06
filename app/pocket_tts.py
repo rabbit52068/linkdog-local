@@ -72,6 +72,11 @@ class PocketTTSBackend:
         except Exception as exc:
             raise TTSError("Pocket TTS synthesis failed") from exc
 
+    def warm(self) -> None:
+        """Load the model and voice state now; failures surface via load_status."""
+        with self._lock:
+            self._ensure_loaded()
+
     def _ensure_loaded(self) -> None:
         if self._model is None:
             self.load_status = "loading"

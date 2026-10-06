@@ -82,6 +82,11 @@ ACTION_LOCKS: Dict[str, asyncio.Lock] = {}
 # Resident Pocket TTS backend, shared by every session and read by /api/health.
 POCKET_TTS_BACKEND: Any = None
 
+# Process-wide ASR backend and the config it was built from (see
+# app/routes/device.py::build_asr).
+ASR_BACKEND: Any = None
+ASR_CONFIG: Any = None
+
 
 MODEL_CATALOG = OllamaModelCatalog(chat_env("API_KEY", ""))
 

@@ -36,11 +36,16 @@ class VoiceInputPipeline:
         self.invalid_audio_frames = 0
         self._listening = False
         self._discard_frames = 0
+        self._wake_word_pending = False
         self._idle_timer_task: Optional[asyncio.Task] = None
 
     @property
     def is_listening(self) -> bool:
         return self._listening
+
+    def note_wake_word(self) -> None:
+        """Drop the wake-word tail at the start of the next listening window."""
+        self._wake_word_pending = True
 
     def start_listening(self) -> bool:
         if self.session.state in (DeviceState.THINKING, DeviceState.SPEAKING):
@@ -53,8 +58,11 @@ class VoiceInputPipeline:
         self.endpoint.reset()
         self._clear_utterances()
         self._listening = True
-        # Drop the wake-word tail (~800ms = 13 frames @ 60ms) so the "Xiaobin Xiaobin" residue is not treated as a command
-        self._discard_frames = 13
+        # Drop the wake-word tail (~800ms = 13 frames @ 60ms) so the "Xiaobin
+        # Xiaobin" residue is not treated as a command. Only after an actual
+        # wake word: auto-mode follow-ups would lose the start of real speech.
+        self._discard_frames = 13 if self._wake_word_pending else 0
+        self._wake_word_pending = False
         self.session.state = DeviceState.LISTENING
         self._start_idle_timer()
         return True

@@ -134,6 +134,8 @@ class VoiceTurnWorker:
         self._rest_task: Optional[asyncio.Task] = None
         self._cooldown_until = 0.0
         self._idle = asyncio.Event()
+        self._timing: dict[str, int] = {}
+        self._turn_started = 0.0
 
     async def next_transcript(self) -> str:
         return await self.transcripts.get()
@@ -246,6 +248,26 @@ class VoiceTurnWorker:
         )
 
     async def _process_turn(self, utterance: bytes, generation: int) -> None:
+        self._timing = {}
+        self._turn_started = self._clock()
+        try:
+            await self._run_turn(utterance, generation)
+        finally:
+            self._log_timing()
+
+    def _mark(self, stage: str) -> None:
+        """Record ms since the turn started, once per stage."""
+        if stage not in self._timing:
+            self._timing[stage] = round((self._clock() - self._turn_started) * 1000)
+
+    def _log_timing(self) -> None:
+        if not self._timing:
+            return
+        self._mark("total_ms")
+        stages = " ".join(f"{key}={value}" for key, value in self._timing.items())
+        LOGGER.info(f"[VOICE-TIMING] device={self.session.device_id} {stages}")
+
+    async def _run_turn(self, utterance: bytes, generation: int) -> None:
         self.session.state = DeviceState.THINKING
         if await self._discard_during_cooldown(generation):
             return
@@ -253,6 +275,7 @@ class VoiceTurnWorker:
             return
         try:
             text = await self.asr.transcribe(utterance, sample_rate=16_000)
+            self._mark("asr_ms")
         except ASRTimeoutError as error:
             self.asr_timeouts += 1
             LOGGER.info(
@@ -302,6 +325,7 @@ class VoiceTurnWorker:
         """Non-streaming path: full reply, then one-shot TTS + playback."""
         try:
             response = await self.chat.complete(self.session.device_id, text)
+            self._mark("llm_first_ms")
         except ChatAPIError:
             self.chat_failures += 1
             await self._recover_if_current(generation)
@@ -352,6 +376,7 @@ class VoiceTurnWorker:
             async for delta in self.chat.stream_complete(
                 self.session.device_id, text
             ):
+                self._mark("llm_first_ms")
                 if not self._is_current(generation):
                     return
                 if isinstance(delta, ChatToolCall):
@@ -412,6 +437,7 @@ class VoiceTurnWorker:
             return turn_opened
         try:
             pcm = await self.tts.synthesize(spoken)
+            self._mark("tts_first_ms")
         except TTSError as error:
             self._note_tts_failure(error, spoken, generation)
             if not turn_opened:
@@ -423,6 +449,7 @@ class VoiceTurnWorker:
             if not turn_opened:
                 await self.player.begin(spoken, emotion=emotion)
                 turn_opened = True
+                self._mark("first_audio_ms")
             await self.player.feed(pcm)
         except PlaybackError:
             self.playback_failures += 1
@@ -438,6 +465,7 @@ class VoiceTurnWorker:
         spoken_response = sanitize_spoken_text(spoken_response)
         try:
             pcm = await self.tts.synthesize(spoken_response)
+            self._mark("tts_first_ms")
         except TTSError as error:
             self._note_tts_failure(error, spoken_response, generation)
             await self._recover_if_current(generation)
@@ -445,6 +473,7 @@ class VoiceTurnWorker:
         if not self._is_current(generation):
             return
         try:
+            self._mark("first_audio_ms")
             if response_emotion is None:
                 await self.player.play(spoken_response, pcm)
             else:
@@ -474,11 +503,23 @@ class VoiceTurnWorker:
             self.chat_failures += 1
             await self._recover_if_current(generation)
             return None
+        action_started = self._clock()
         try:
             return await executor(executor_argument)
         except VoiceActionError:
             self.action_failures += 1
             return "That didn't work, try again."
+        finally:
+            self._timing["action_ms"] = round(
+                (self._clock() - action_started) * 1000
+            )
+            if tool_call.name == "linkdog_action" and self._is_current(generation):
+                # The motion state gate (tts:start -> tts:stop) has already
+                # put the device in Listening, and the listen:start it sent
+                # was ignored mid-turn. Match that state so the confirmation
+                # opens with a real tts:start and its closing tts:stop makes
+                # the device announce listen:start again.
+                self.session.state = DeviceState.LISTENING
 
     def _is_current(self, generation: int) -> bool:
         return generation == self._generation and not self.session.closed
