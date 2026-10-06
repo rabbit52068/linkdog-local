@@ -18,6 +18,7 @@ from app.device_session import DeviceSession
 from app.playback import OpusDownlinkPlayer
 from app.pocket_tts import PocketTTSBackend
 from app.routes.control import (
+    VOICE_ACTION_CONFIRMATIONS,
     VOICE_ACTION_TOOL,
     VOICE_ACTIONS,
     apply_saved_volume,
@@ -252,6 +253,7 @@ async def ws_endpoint(ws: WebSocket):
             action_executor=build_voice_action_executor(device_id),
             volume_executor=build_voice_volume_executor(device_id),
             disconnect=lambda: disconnect_device(session),
+            action_announcements=VOICE_ACTION_CONFIRMATIONS,
             abort_cooldown_seconds=float(
                 os.environ.get("LINKDOG_ABORT_COOLDOWN", "2.0")
             ),

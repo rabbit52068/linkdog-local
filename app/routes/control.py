@@ -27,10 +27,12 @@ ALLOWED_ACTIONS = {action: tool_name(action) for action in ACTION_SPECS}
 VOICE_ACTIONS = ("sit_down", "stand_up", "get_down", "shake_hands")
 
 
+# Spoken before the motion runs (see VoiceTurnWorker.action_announcements),
+# so they are phrased as what is about to happen.
 VOICE_ACTION_CONFIRMATIONS = {
-    "sit_down": "Okay, I sat down.",
-    "stand_up": "Okay, I'm standing up.",
-    "get_down": "Okay, I'm lying down.",
+    "sit_down": "Okay, sitting down.",
+    "stand_up": "Okay, standing up.",
+    "get_down": "Okay, lying down.",
     "shake_hands": "Here, shake!",
 }
 

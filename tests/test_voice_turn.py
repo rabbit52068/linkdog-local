@@ -391,10 +391,7 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tts.calls, ["Okay, I sat down."])
         self.assertEqual(player.calls, [("Okay, I sat down.", b"action-pcm")])
 
-    async def test_action_confirmation_reopens_speaking_after_state_gate(self):
-        """The motion gate leaves the device in Listening; the confirmation
-        must send a fresh tts:start, or the device never re-announces
-        listen:start and the next utterance is ignored."""
+    def _real_player(self):
         from app.playback import OpusDownlinkPlayer
 
         class Codec:
@@ -410,26 +407,70 @@ class VoiceTurnWorkerTests(unittest.IsolatedAsyncioTestCase):
         async def no_sleep(_seconds):
             return None
 
-        player = OpusDownlinkPlayer(self.session, Codec(), sleep=no_sleep)
+        return OpusDownlinkPlayer(self.session, Codec(), sleep=no_sleep)
+
+    async def test_motion_is_announced_first_and_never_followed_by_speaking(self):
+        """The firmware animates the body from the Speaking state's emotion,
+        so speaking after a motion overrides the pose (the dog would not stay
+        standing). The confirmation must play before the motion runs."""
+        sent_before_action = []
+
+        class RecordingExecutor(FakeActionExecutor):
+            async def __call__(inner, action):
+                sent_before_action.extend(self.websocket.messages)
+                return await super().__call__(action)
+
+        executor = RecordingExecutor(response="ignored")
         worker = await self.start_worker(
             FakeASR(result="stand up"),
             chat=StreamingHermes([ChatToolCall("linkdog_action", {"action": "stand_up"})]),
             tts=FakeTTS(pcm=b"\0\0" * 960),
-            player=player,
-            action_executor=FakeActionExecutor(response="Okay, I'm standing up."),
+            player=self._real_player(),
+            action_executor=executor,
+            action_announcements={"stand_up": "Okay, standing up."},
         )
         with self.assertLogs("app.voice_turn", level="INFO") as logs:
             await self.voice_input.utterances.put(b"pcm")
-            await asyncio.wait_for(worker.next_response(), timeout=0.5)
+            response = await asyncio.wait_for(worker.next_response(), timeout=0.5)
 
-        json_messages = [m for m in self.websocket.messages if isinstance(m, dict)]
-        self.assertIn({"type": "tts", "state": "start"}, json_messages)
-        self.assertEqual(json_messages[-1], {"type": "tts", "state": "stop"})
+        self.assertEqual(response, "Okay, standing up.")
+        self.assertEqual(executor.calls, ["stand_up"])
+        json_before = [m for m in sent_before_action if isinstance(m, dict)]
+        self.assertIn(
+            {"type": "tts", "state": "sentence_start", "text": "Okay, standing up."},
+            json_before,
+        )
+        self.assertEqual(json_before[-1], {"type": "tts", "state": "stop"})
+        after = self.websocket.messages[len(sent_before_action):]
+        self.assertEqual(after, [], "nothing may be sent after the motion")
         self.assertEqual(self.session.state, DeviceState.LISTENING)
         timing = [r.getMessage() for r in logs.records if "[VOICE-TIMING]" in r.getMessage()]
         self.assertEqual(len(timing), 1)
         for stage in ("asr_ms=", "llm_first_ms=", "action_ms=", "first_audio_ms=", "total_ms="):
             self.assertIn(stage, timing[0])
+
+    async def test_failed_announced_motion_speaks_the_failure_with_tts_start(self):
+        worker = await self.start_worker(
+            FakeASR(result="sit"),
+            chat=StreamingHermes([ChatToolCall("linkdog_action", {"action": "sit_down"})]),
+            tts=FakeTTS(pcm=b"\0\0" * 960),
+            player=self._real_player(),
+            action_executor=FakeActionExecutor(error=VoiceActionError("offline")),
+            action_announcements={"sit_down": "Okay, sitting down."},
+        )
+        await self.voice_input.utterances.put(b"pcm")
+        response = await asyncio.wait_for(worker.next_response(), timeout=0.5)
+
+        self.assertEqual(response, "That didn't work, try again.")
+        texts = [m.get("text") for m in self.websocket.messages
+                 if isinstance(m, dict) and m.get("state") == "sentence_start"]
+        self.assertEqual(texts, ["Okay, sitting down.", "That didn't work, try again."])
+        # The failure turn starts from Listening, so it must open with tts:start.
+        last_start = max(i for i, m in enumerate(self.websocket.messages)
+                         if m == {"type": "tts", "state": "start"})
+        first_failure = next(i for i, m in enumerate(self.websocket.messages)
+                             if isinstance(m, dict) and m.get("text") == "That didn't work, try again.")
+        self.assertLess(last_start, first_failure)
 
     async def test_action_failure_speaks_failure_without_claiming_success(self):
         executor = FakeActionExecutor(error=VoiceActionError("MCP timeout"))

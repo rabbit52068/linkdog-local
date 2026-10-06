@@ -63,6 +63,7 @@ class VoiceActionError(RuntimeError):
 
 
 REST_MESSAGE_FALLBACK = "If there's nothing else, I'll rest now."
+FAILED_ACTION_MESSAGE = "That didn't work, try again."
 
 _EMOJI_RE = re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
@@ -98,6 +99,7 @@ class VoiceTurnWorker:
         volume_executor: Optional[Callable[[dict], Awaitable[str]]] = None,
         disconnect: Optional[Callable[[], Awaitable[None]]] = None,
         abort_cooldown_seconds: float = 2.0,
+        action_announcements: Optional[dict[str, str]] = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
@@ -112,6 +114,10 @@ class VoiceTurnWorker:
         self.action_executor = action_executor
         self.volume_executor = volume_executor
         self.disconnect = disconnect
+        # Spoken BEFORE a motion runs: the firmware animates the body from
+        # the Speaking state's emotion, so speaking after a motion overrides
+        # the pose it just reached (e.g. the dog never stays standing).
+        self.action_announcements = dict(action_announcements or {})
         self.abort_cooldown_seconds = max(0.0, abort_cooldown_seconds)
         self._clock = clock
         self._sleep = sleep
@@ -331,9 +337,10 @@ class VoiceTurnWorker:
             await self._recover_if_current(generation)
             return
         if isinstance(response, ChatToolCall):
-            response = await self._execute_tool_call(response, generation)
-            if response is None:
-                return
+            spoken = await self._handle_tool_call(response, generation)
+            if spoken is not None:
+                self._put_queue(self.responses, spoken)
+            return
         if not self._is_current(generation):
             return
 
@@ -380,13 +387,9 @@ class VoiceTurnWorker:
                 if not self._is_current(generation):
                     return
                 if isinstance(delta, ChatToolCall):
-                    response = await self._execute_tool_call(delta, generation)
-                    if response is None:
-                        return
-                    if not self._is_current(generation):
-                        return
-                    await self._speak_one_shot(response, generation)
-                    self._put_queue(self.responses, response)
+                    spoken = await self._handle_tool_call(delta, generation)
+                    if spoken is not None:
+                        self._put_queue(self.responses, spoken)
                     return
 
                 response_parts.append(delta)
@@ -486,6 +489,38 @@ class VoiceTurnWorker:
                 self.session.state = DeviceState.LISTENING
             return
 
+    async def _handle_tool_call(
+        self, tool_call: ChatToolCall, generation: int
+    ) -> Optional[str]:
+        """Run a tool call and speak about it; return what was spoken.
+
+        A motion with an announcement is announced first and then executed,
+        so no Speaking state follows the motion. Anything else is executed
+        first and its result spoken afterwards.
+        """
+        announcement = None
+        if tool_call.name == "linkdog_action":
+            announcement = self.action_announcements.get(
+                tool_call.arguments.get("action")
+            )
+        if announcement is not None:
+            await self._speak_one_shot(announcement, generation)
+            if not self._is_current(generation):
+                return None
+            result = await self._execute_tool_call(tool_call, generation)
+            if result is None or not self._is_current(generation):
+                return None
+            if result == FAILED_ACTION_MESSAGE:
+                await self._speak_one_shot(result, generation)
+                return result
+            return announcement
+
+        result = await self._execute_tool_call(tool_call, generation)
+        if result is None or not self._is_current(generation):
+            return None
+        await self._speak_one_shot(result, generation)
+        return result
+
     async def _execute_tool_call(
         self, tool_call: ChatToolCall, generation: int
     ) -> Optional[str]:
@@ -508,17 +543,15 @@ class VoiceTurnWorker:
             return await executor(executor_argument)
         except VoiceActionError:
             self.action_failures += 1
-            return "That didn't work, try again."
+            return FAILED_ACTION_MESSAGE
         finally:
             self._timing["action_ms"] = round(
                 (self._clock() - action_started) * 1000
             )
             if tool_call.name == "linkdog_action" and self._is_current(generation):
-                # The motion state gate (tts:start -> tts:stop) has already
-                # put the device in Listening, and the listen:start it sent
-                # was ignored mid-turn. Match that state so the confirmation
-                # opens with a real tts:start and its closing tts:stop makes
-                # the device announce listen:start again.
+                # The motion state gate (tts:start -> tts:stop) has left the
+                # device in Listening. Match that state so any later speech
+                # (e.g. a failure message) opens with a real tts:start.
                 self.session.state = DeviceState.LISTENING
 
     def _is_current(self, generation: int) -> bool:

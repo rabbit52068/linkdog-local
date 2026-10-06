@@ -171,7 +171,7 @@ class ActionExecutionTests(unittest.IsolatedAsyncioTestCase):
         request = send.await_args.args[0]
         self.assertEqual(request.device_id, "TEST:DOG")
         self.assertEqual(request.action, "sit_down")
-        self.assertEqual(response, "Okay, I sat down.")
+        self.assertEqual(response, "Okay, sitting down.")
 
     async def test_voice_volume_up_reads_status_then_sets_hardware_volume(self):
         status = {
